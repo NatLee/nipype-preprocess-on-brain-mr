@@ -1,94 +1,61 @@
-import shutil
-from pathlib import Path
-
-from nipype.interfaces.base import (SimpleInterface, BaseInterfaceInputSpec, TraitedSpec, File, Directory)
 from loguru import logger
+from nipype.interfaces.base import File, TraitedSpec
 
+from node.base import StepInputSpec, StepInterface
+from node.segmentation.utils import get_target_labels, kmeans_cluster, segment, tissue_labels
 from utils.load_nii import load_nii
+from utils.paths import nii_stem
 from utils.save_nii import save_nii
 
-from node.segmentation.utils import kmeans_cluster
-from node.segmentation.utils import get_target_labels
-from node.segmentation.utils import segment
+# Split the brain into 3 clusters (GM, WM, CSF)
+N_CLUSTERS = 3
 
-class SegmentationInputSpec(BaseInterfaceInputSpec):
-    input_file = File(exists=True, desc='Source image path (.nii.gz)', mandatory=True)
-    output_folder = Directory(exists=False, desc='Output folder for the segmented image', mandatory=True)
+
+class SegmentationInputSpec(StepInputSpec):
+    pass
+
 
 class SegmentationOutputSpec(TraitedSpec):
-    gm_segmented_output_file = File(exists=True, desc='Path to GM segmented image')
-    wm_segmented_output_file = File(exists=True, desc='Path to WM segmented image')
-    csf_segmented_output_file = File(exists=True, desc='Path to CSF segmented image')
+    gm_segmented_output_file = File(exists=True, desc="Path to GM segmented image")
+    wm_segmented_output_file = File(exists=True, desc="Path to WM segmented image")
+    csf_segmented_output_file = File(exists=True, desc="Path to CSF segmented image")
 
-    gm_labels_output_file = File(exists=True, desc='Path to GM labels image')
-    wm_labels_output_file = File(exists=True, desc='Path to WM labels image')
-    csf_labels_output_file = File(exists=True, desc='Path to CSF labels image')
+    gm_labels_output_file = File(exists=True, desc="Path to GM labels image")
+    wm_labels_output_file = File(exists=True, desc="Path to WM labels image")
+    csf_labels_output_file = File(exists=True, desc="Path to CSF labels image")
 
-class SegmentationInterface(SimpleInterface):
+    tissue_labels_output_file = File(exists=True, desc="Tissue label map: 0 background, 1 CSF, 2 GM, 3 WM")
+
+
+class SegmentationInterface(StepInterface):
+    """K-means on intensity: the pipeline's original GM / WM / CSF segmentation."""
+
     input_spec = SegmentationInputSpec
     output_spec = SegmentationOutputSpec
+    step_name = "segmentation"
 
     def _run_interface(self, runtime):
         input_file = self.inputs.input_file
-        output_folder = Path(self.inputs.output_folder)
-        output_segmentation_folder = output_folder / 'segmentation'
+        output_segmentation_folder = self._step_dir()
+        # Path(...).stem of "x.nii.gz" is "x.nii"; the original file names keep that ".nii" part.
+        legacy_stem = f"{nii_stem(input_file)}.nii"
 
-        # Specify the labels and segmented image paths
-        gm_labels_path = output_segmentation_folder / (Path(input_file).stem + '_gm_labels.nii.gz')
-        wm_labels_path = output_segmentation_folder / (Path(input_file).stem + '_wm_labels.nii.gz')
-        csf_labels_path = output_segmentation_folder / (Path(input_file).stem + '_csf_labels.nii.gz')
+        logger.info(f"Segment on: {input_file}")
+        logger.info(f"Output folder: {output_segmentation_folder}")
 
-        gm_segmented_image_path = output_segmentation_folder / (Path(input_file).stem + '_gm_segmented.nii.gz')
-        wm_segmented_image_path = output_segmentation_folder / (Path(input_file).stem + '_wm_segmented.nii.gz')
-        csf_segmented_image_path = output_segmentation_folder / (Path(input_file).stem + '_csf_segmented.nii.gz')
+        data, affine = load_nii(input_file)
+        labels = kmeans_cluster(data, N_CLUSTERS)
+        targets = dict(zip(("gm", "wm", "csf"), get_target_labels(labels, data)))
 
-        logger.info(f'Segment on: {input_file}')
-        logger.info(f'Output folder: {output_segmentation_folder}')
+        for tissue, target in targets.items():
+            labels_path = output_segmentation_folder / f"{legacy_stem}_{tissue}_labels.nii.gz"
+            segmented_path = output_segmentation_folder / f"{legacy_stem}_{tissue}_segmented.nii.gz"
+            save_nii(labels, str(labels_path), affine)
+            save_nii(segment(labels, data, target), str(segmented_path), affine)
+            self._results[f"{tissue}_labels_output_file"] = labels_path.as_posix()
+            self._results[f"{tissue}_segmented_output_file"] = segmented_path.as_posix()
 
-        # Ensure the output directory exists
-        output_segmentation_folder.mkdir(parents=True, exist_ok=True)
-
-        # Clean up the output directory
-        for file in output_segmentation_folder.glob('*'):
-            if file.is_file():
-                file.unlink()
-            if file.is_dir():
-                shutil.rmtree(file)
-
-        try:
-            # Load the image data and perform K-means clustering
-            data, affine = load_nii(input_file)
-            
-            # Split the data into 3 clusters (GM, WM, CSF)
-            n_clusters = 3
-
-            labels = kmeans_cluster(data, n_clusters)
-
-            gm_target, wm_target, csf_target = get_target_labels(labels, data)
-
-            g_matter = segment(labels, data, gm_target)
-            save_nii(labels, str(gm_labels_path), affine)
-            save_nii(g_matter, str(gm_segmented_image_path), affine)
-
-            w_matter = segment(labels, data, wm_target)
-            save_nii(labels, str(wm_labels_path), affine)
-            save_nii(w_matter, str(wm_segmented_image_path), affine)
-
-            c_matter = segment(labels, data, csf_target)
-            save_nii(labels, str(csf_labels_path), affine)
-            save_nii(c_matter, str(csf_segmented_image_path), affine)
-
-            self._results['gm_segmented_output_file'] = str(gm_segmented_image_path)
-            self._results['gm_labels_output_file'] = str(gm_labels_path)
-            self._results['wm_segmented_output_file'] = str(wm_segmented_image_path)
-            self._results['wm_labels_output_file'] = str(wm_labels_path)
-            self._results['csf_segmented_output_file'] = str(csf_segmented_image_path)
-            self._results['csf_labels_output_file'] = str(csf_labels_path)
-
-        except RuntimeError as e:
-            logger.warning(f'Failed on: {input_file} with error: {e}')
-
+        tissue_path = output_segmentation_folder / f"{nii_stem(input_file)}_tissue_labels.nii.gz"
+        save_nii(tissue_labels(labels, data), str(tissue_path), affine)
+        self._results["tissue_labels_output_file"] = tissue_path.as_posix()
         return runtime
-
-    def _list_outputs(self):
-        return self._results
