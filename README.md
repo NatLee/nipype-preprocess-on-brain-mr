@@ -38,7 +38,7 @@ flowchart TD
         flirt["Affine registration to MNI152<br/>FSL FLIRT, 12 dof"]
         bet["Skull stripping<br/>FSL BET"]
         n4["Bias-field correction<br/>ANTs N4"]
-        enhance["Enhancement<br/>median filter, rescale, histogram equalisation"]
+        enhance["Enhancement for viewing<br/>median filter, rescale, histogram equalisation"]
         kmeans["GM / WM / CSF by K-means<br/>scikit-learn"]
         maps["Probability maps<br/>nilearn"]
         final["final_output/"]
@@ -51,7 +51,8 @@ flowchart TD
         report["HTML report per scan"]
         index["index.html for the whole run"]
     end
-    scan --> acpc --> gz --> reorient --> flirt --> bet --> n4 --> enhance --> kmeans
+    scan --> acpc --> gz --> reorient --> flirt --> bet --> n4 --> enhance
+    n4 --> kmeans
     flirt --> maps
     kmeans --> maps --> final
     acpc --> final
@@ -64,6 +65,7 @@ flowchart TD
     analysis --> report
     render --> report
     maps --> report
+    enhance --> report
     report --> index
 ```
 
@@ -155,7 +157,7 @@ Every scan gets a page with each step side by side, the AC-PC landmarks acpcdete
 changed, the three segmentations with their volumes and agreement, the 3D brain and the original
 probability maps.
 
-<p align="center"><img src="docs/images/pipeline.png" alt="The scan after each step: original, AC-PC, registered, skull stripped, N4 corrected, enhanced" width="100%"></p>
+<p align="center"><img src="docs/images/pipeline.png" alt="The scan after each step: original, AC-PC, registered, skull stripped, N4 corrected, and the equalised view" width="100%"></p>
 
 **Bias correction, measured.** The scanner makes some parts of the head brighter than others. N4
 estimates that smooth drift (left) and divides it out; afterwards the grey- and white-matter peaks are
@@ -175,21 +177,33 @@ size. Agreement between methods is the Dice overlap per tissue (1 = the same vox
 
 Results for the three demo scans (1 mm template, FSL FAST volumes at each scan's own size):
 
-| Scan | TIV (mL) | Grey matter | White matter | CSF | CSF by K-means | CJV before → after N4 | Grey-matter Dice, FAST vs Atropos |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| sub-01 | 1,324 | 45.1% | 33.6% | 21.3% | 32.8% | 0.64 → 0.56 | 0.89 |
-| sub-02 | 1,481 | 44.4% | 34.1% | 21.4% | 33.0% | 0.63 → 0.54 | 0.92 |
-| sub-03 | 1,228 | 45.7% | 33.8% | 20.6% | 32.6% | 0.64 → 0.56 | 0.87 |
+| Scan | TIV (mL) | Grey matter | White matter | CSF | CJV before → after N4 | Grey-matter Dice, FAST vs Atropos |
+|---|---:|---:|---:|---:|---:|---:|
+| sub-01 | 1,324 | 45.1% | 33.6% | 21.3% | 0.64 → 0.56 | 0.89 |
+| sub-02 | 1,481 | 44.4% | 34.1% | 21.4% | 0.63 → 0.54 | 0.92 |
+| sub-03 | 1,228 | 45.7% | 33.8% | 20.6% | 0.64 → 0.56 | 0.87 |
 
 These are three healthy adults aged 24 to 27, and FAST puts grey matter at about 45% of the
 intracranial volume and white matter at about a third. N4 lowered the grey/white CJV on every scan.
 
-One thing the comparison makes visible: K-means cuts every brain into three almost equal thirds
-(about 33% each). That comes from the original design, not from the brains. K-means runs on the
-histogram-equalised image, equalisation flattens the intensity histogram, and three clusters on a
-flat histogram end up the same size. FAST and Atropos model the actual tissue peaks instead. All three
-methods agree on white matter (Dice 0.93 to 0.96 for every pair); they differ along the border between
-grey matter and CSF (0.77 to 0.94), which is where K-means finds its extra CSF.
+### Why K-means no longer reads the equalised image
+
+The first version of this comparison showed K-means cutting every brain into almost exactly equal
+thirds. That came from the pipeline, not from the brains: K-means clustered the histogram-equalised
+image, equalisation flattens the histogram, and three clusters on a flat histogram end up the same
+size. K-means now clusters the bias-corrected brain, the same image FAST and Atropos get, after the
+same percentile clipping as before but without the equalisation. The equalised image is still made
+and shown in the report. This changes the K-means output on purpose:
+
+| Scan | K-means CSF / GM / WM, equalised (old) | K-means CSF / GM / WM, now | GM Dice vs FAST, old → now | GM Dice vs Atropos, old → now |
+|---|---:|---:|---:|---:|
+| sub-01 | 32.8 / 34.3 / 33.0% | 24.4 / 39.7 / 35.9% | 0.82 → 0.91 | 0.85 → 0.95 |
+| sub-02 | 33.0 / 34.0 / 33.0% | 22.1 / 39.7 / 38.2% | 0.82 → 0.93 | 0.78 → 0.96 |
+| sub-03 | 32.6 / 33.9 / 33.5% | 24.2 / 39.0 / 36.7% | 0.80 → 0.89 | 0.88 → 0.94 |
+
+All three methods now agree closely on white matter (Dice 0.93 to 0.99 for every pair). The
+remaining differences sit on the border between grey matter and CSF, where FAST calls a few more
+voxels grey matter than K-means and Atropos do (Dice 0.85 to 0.96).
 
 ## Inside the Docker image
 

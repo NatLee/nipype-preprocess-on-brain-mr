@@ -32,7 +32,7 @@ class QCReportInputSpec(BaseInterfaceInputSpec):
     brain_mask = File(exists=True, mandatory=True, desc="BET brain mask")
     corrected_file = File(exists=True, mandatory=True, desc="Bias-corrected brain")
     bias_field = File(exists=True, mandatory=True, desc="Bias field N4 removed")
-    enhanced_file = File(exists=True, mandatory=True, desc="Enhanced brain (K-means input)")
+    enhanced_file = File(exists=True, mandatory=True, desc="Histogram-equalised brain (for viewing)")
     kmeans_labels = File(exists=True, mandatory=True, desc="K-means tissue label map")
     fast_labels = File(exists=True, desc="FSL FAST tissue label map")
     atropos_labels = File(exists=True, desc="ANTs Atropos tissue label map")
@@ -91,7 +91,7 @@ class QCReportInterface(SimpleInterface):
                     ("Registered", self.inputs.registered_file),
                     ("Skull stripped", self.inputs.brain_file),
                     ("N4 corrected", self.inputs.corrected_file),
-                    ("Enhanced", self.inputs.enhanced_file),
+                    ("Equalised (view)", self.inputs.enhanced_file),
                 ],
                 figure_dir / "pipeline.png",
             ),

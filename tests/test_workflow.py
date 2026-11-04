@@ -64,10 +64,19 @@ def test_probability_maps_are_drawn_over_the_registered_scan(pairs, tmp_path):
 def test_the_original_chain_is_kept(pairs, tmp_path):
     connections = edges(workflow.build_workflow(pairs, tmp_path / "output"), tmp_path)
     chain = ["process_pair", "t1_acpc_detect", "zip_output", "orient2std", "registration", "skull_stripping",
-             "bias_field_correction", "enhancement", "segmentation"]
+             "bias_field_correction", "enhancement"]
     for upstream, downstream in zip(chain, chain[1:]):
         assert (upstream, downstream) in connections
     assert ("t1_acpc_detect", "final_output") in connections
+
+
+def test_every_segmentation_reads_the_corrected_brain(pairs, tmp_path):
+    """Regression (user-approved change): K-means no longer reads the histogram-equalised image."""
+    connections = edges(workflow.build_workflow(pairs, tmp_path / "output"), tmp_path)
+    for node in ("segmentation", "segmentation_fast", "segmentation_atropos"):
+        assert ("bias_field_correction", node) in connections
+    assert ("enhancement", "segmentation") not in connections
+    assert ("enhancement", "qc_report") in connections  # the equalised image is still shown
 
 
 def test_methods_and_3d_can_be_switched_off(pairs, tmp_path):

@@ -103,3 +103,18 @@ def test_methods_agree_and_n4_helps(run):
     assert (fast_atropos["dice"] > 0.8).all()
     quality = json.loads((output / scan / "analysis" / "quality.json").read_text())
     assert quality["after_n4"]["cjv"] < quality["before_n4"]["cjv"]
+
+
+def test_kmeans_shares_follow_fast_not_thirds(run):
+    """Regression (user-approved change): K-means used to split every brain into equal thirds.
+
+    It clustered the histogram-equalised image, which put CSF at about 33% on the
+    demo scans while FAST found about 21%. It now clusters the corrected brain.
+    """
+    _, output, scan = run
+    volumes = pd.read_csv(output / scan / "analysis" / "volumetrics.csv").set_index("method")
+    assert volumes.loc["kmeans", "csf_fraction"] < 0.3
+    assert abs(volumes.loc["kmeans", "csf_fraction"] - volumes.loc["fast", "csf_fraction"]) < 0.06
+    agreement = pd.read_csv(output / scan / "analysis" / "agreement.csv")
+    kmeans_fast = agreement[(agreement.method_a == "kmeans") & (agreement.method_b == "fast")]
+    assert (kmeans_fast["dice"] > 0.85).all()

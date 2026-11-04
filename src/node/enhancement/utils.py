@@ -7,6 +7,10 @@ from collections.abc import Sequence
 import numpy as np
 from scipy.signal import medfilt
 
+# Intensities below the 0.5th and above the 99.5th percentile of the brain are
+# clipped when rescaling (shared by the enhancement and K-means steps).
+DEFAULT_PERCENTILES = (0.5, 99.5)
+
 
 def denoise(volume: np.ndarray, kernel_size: int = 3) -> np.ndarray:
     """Median filter; `kernel_size=1` leaves the values unchanged."""
@@ -14,7 +18,7 @@ def denoise(volume: np.ndarray, kernel_size: int = 3) -> np.ndarray:
 
 
 def rescale_intensity(
-    volume: np.ndarray, percentils: Sequence[float] = (0.5, 99.5), bins_num: int = 256
+    volume: np.ndarray, percentils: Sequence[float] = DEFAULT_PERCENTILES, bins_num: int = 256
 ) -> np.ndarray:
     """Stretch the brain's intensities between two percentiles.
 

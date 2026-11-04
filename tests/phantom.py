@@ -42,8 +42,14 @@ def make_phantom(
     noise_sd: float = 25.0,
     bias: float = 0.0,
     seed: int = 0,
+    radii: tuple[float, float, float] = (0.85, 0.75, 0.5),
 ) -> Phantom:
-    """Build the phantom. `bias` adds a linear intensity drift of +-bias across x (0.2 = +-20%)."""
+    """Build the phantom.
+
+    `bias` adds a linear intensity drift of +-bias across x (0.2 = +-20%).
+    `radii` are the outer edges of CSF, GM and WM as fractions of the half-width,
+    which sets how much of each tissue there is.
+    """
     rng = np.random.default_rng(seed)
     grid = np.stack(np.meshgrid(*[np.linspace(-1, 1, n) for n in shape], indexing="ij"))
     radius = np.sqrt((grid**2).sum(axis=0))
@@ -52,9 +58,10 @@ def make_phantom(
     folds = 1 + 0.08 * np.sin(6 * theta) * np.sin(5 * phi)  # wavy GM/WM boundary, like gyri
 
     labels = np.zeros(shape, dtype=np.uint8)
-    labels[radius < 0.85] = 1
-    labels[radius < 0.75] = 2
-    labels[radius < 0.5 * folds] = 3
+    csf_edge, gm_edge, wm_edge = radii
+    labels[radius < csf_edge] = 1
+    labels[radius < gm_edge] = 2
+    labels[radius < wm_edge * folds] = 3
 
     image = np.zeros(shape, dtype=np.float32)
     for label, value in INTENSITY.items():

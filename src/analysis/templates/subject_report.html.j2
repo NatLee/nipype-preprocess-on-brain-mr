@@ -31,8 +31,9 @@
 
 <h2>1 · The scan after each step</h2>
 <p class="lead">Each column is the same brain after one more step: the original scan, AC-PC alignment,
-affine registration to the MNI152 template, skull stripping, N4 bias correction, and the contrast
-enhancement that the K-means step reads.</p>
+affine registration to the MNI152 template, skull stripping and N4 bias correction. The last column
+is the histogram-equalised version of the corrected brain, made for viewing; the segmentations all
+read the corrected brain itself.</p>
 <figure><img src="{{ figures.pipeline }}" alt="Sagittal, coronal and axial slices of the scan after every processing step">
 <figcaption>Slices pass through the centre of the head (or of the brain, once the skull is gone).</figcaption></figure>
 
