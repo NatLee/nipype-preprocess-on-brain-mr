@@ -46,8 +46,8 @@ RUN curl -fsSL -o MNI152_T1_1mm.nii.gz "${TEMPLATE_URL}/tpl-MNI152NLin6Asym_res-
  && curl -fsSL -o MNI152_T1_2mm.nii.gz "${TEMPLATE_URL}/tpl-MNI152NLin6Asym_res-02_T1w.nii.gz" \
  && sha256sum -c templates.sha256
 
-# ------------------------------------------------------------ runtime ----
-FROM python:${PYTHON_VERSION}-slim AS runtime
+# --------------------------------------------- base (everything but tests) ----
+FROM python:${PYTHON_VERSION}-slim AS base
 # graphviz draws the workflow graph; acpcdetect links against BLAS/LAPACK and
 # calls netpbm's pnmtopng for its landmark previews; FSL's bet script does its
 # arithmetic with bc and dc.
@@ -81,13 +81,17 @@ ENV FSLDIR=/opt/fsl \
 
 COPY src /src
 WORKDIR /src
-CMD ["python", "workflow.py"]
 
 # --------------------------------------------- test (CI and local checks) ----
-FROM runtime AS test
+FROM base AS test
 COPY requirements-dev.txt /tmp/requirements-dev.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
 COPY pytest.ini /pytest.ini
 COPY tests /tests
 WORKDIR /
 CMD ["python", "-m", "pytest", "/tests"]
+
+# ------------------------------------------------------------ runtime ----
+# Last on purpose: a plain "docker build" builds this stage.
+FROM base AS runtime
+CMD ["python", "workflow.py"]
