@@ -12,10 +12,12 @@ from node.analysis.interface import AnalysisInterface
 from node.cohort_summary.interface import CohortSummaryInterface
 from node.draw_segmentation.interface import DrawSegmentationInterface
 from node.enhancement.interface import EnhancementInterface
+from node.enhancement.utils import equalize_hist, rescale_intensity
 from node.final_output.interface import OrganizeFinalOutputInterface
 from node.qc_report.interface import QCReportInterface
 from node.render_3d.interface import Render3DInterface
 from node.segmentation.interface import SegmentationInterface
+from node.segmentation.utils import kmeans_cluster, tissue_labels
 from node.zip.interface import ZipOutputInterface
 from phantom import make_phantom
 
@@ -51,15 +53,41 @@ def test_enhancement_and_kmeans_nodes_keep_their_file_names(subject):
     enhanced = EnhancementInterface(input_file=str(subject["after_n4"]), output_folder=str(folder)).run()
     assert Path(enhanced.outputs.output_file) == folder / "enhancement" / "after_n4.nii.gz"
 
-    seg = SegmentationInterface(input_file=enhanced.outputs.output_file, output_folder=str(folder)).run()
+    # K-means reads the corrected brain itself (as in the workflow), not the equalised view.
+    seg = SegmentationInterface(input_file=str(subject["after_n4"]), output_folder=str(folder)).run()
     for tissue in ("gm", "wm", "csf"):
         labels_file = Path(getattr(seg.outputs, f"{tissue}_labels_output_file"))
         assert labels_file.name == f"after_n4.nii_{tissue}_labels.nii.gz"  # the pre-refactor names
         assert Path(getattr(seg.outputs, f"{tissue}_segmented_output_file")).exists()
     labels = nib.load(seg.outputs.tissue_labels_output_file).get_fdata()
     truth = nib.load(subject["labels"]).get_fdata()
-    # Histogram equalisation stretches the noise too, so a few boundary voxels flip class.
-    assert (labels == truth).mean() > 0.9
+    assert (labels == truth).mean() > 0.97
+
+
+def tissue_shares(labels: np.ndarray) -> np.ndarray:
+    brain = labels > 0
+    return np.array([(labels == value).sum() / brain.sum() for value in (1, 2, 3)])
+
+
+def test_kmeans_tissue_shares_follow_the_anatomy_not_thirds(tmp_path):
+    """Regression (user-approved change): K-means used to cluster the histogram-equalised image.
+
+    Equalisation flattens the histogram, so the three clusters came out the same
+    size whatever the brain looked like (about 33% each on the demo scans). On
+    the corrected intensities the shares follow the real tissue volumes.
+    """
+    lopsided = make_phantom(radii=(0.78, 0.74, 0.45))  # about 15% CSF, 66% GM, 19% WM
+    truth = tissue_shares(lopsided.labels)
+    image_file, _ = lopsided.save(tmp_path)
+    result = SegmentationInterface(input_file=str(image_file), output_folder=str(tmp_path / "out")).run()
+    found = tissue_shares(np.asanyarray(nib.load(result.outputs.tissue_labels_output_file).dataobj))
+    np.testing.assert_allclose(found, truth, atol=0.03)
+
+    # The old input pulls the shares towards equal thirds, far from the truth.
+    equalised = equalize_hist(rescale_intensity(lopsided.image))
+    old = tissue_shares(tissue_labels(kmeans_cluster(equalised, 3), equalised))
+    assert np.abs(old - 1 / 3).max() < np.abs(truth - 1 / 3).max() / 3
+    assert np.abs(old - truth).max() > 0.2
 
 
 def test_zip_node_gzips_the_input(subject, tmp_path):

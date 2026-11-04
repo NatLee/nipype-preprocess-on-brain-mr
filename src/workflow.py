@@ -140,10 +140,14 @@ def build_workflow(
     workflow.connect(process_pair_node, "input_file", acpc_node, "input_file")
     chain = [
         acpc_node, zip_node, orient2std_node, registration_node, skull_stripping_node,
-        bias_field_correction_node, enhancement_node, segmentation_node,
+        bias_field_correction_node, enhancement_node,
     ]
     for upstream, downstream in zip(chain, chain[1:]):
         workflow.connect(upstream, "output_file", downstream, "input_file")
+    # K-means reads the bias-corrected brain like FAST and Atropos do. It used to read the
+    # histogram-equalised image, which made it split every brain into three equal thirds;
+    # the equalised image is still made, for the report.
+    workflow.connect(bias_field_correction_node, "output_file", segmentation_node, "input_file")
 
     # Probability maps drawn with nilearn over the registered scan (same space as the segmentation).
     map_merge = Node(Merge(len(SEGMENTATION_MAPS)), name="collect_maps")

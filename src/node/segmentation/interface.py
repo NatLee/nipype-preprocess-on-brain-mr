@@ -1,7 +1,8 @@
 from loguru import logger
-from nipype.interfaces.base import File, TraitedSpec
+from nipype.interfaces.base import File, TraitedSpec, traits
 
 from node.base import StepInputSpec, StepInterface
+from node.enhancement.utils import DEFAULT_PERCENTILES, rescale_intensity
 from node.segmentation.utils import get_target_labels, kmeans_cluster, segment, tissue_labels
 from utils.load_nii import load_nii
 from utils.paths import nii_stem
@@ -12,7 +13,12 @@ N_CLUSTERS = 3
 
 
 class SegmentationInputSpec(StepInputSpec):
-    pass
+    percentiles = traits.List(
+        list(DEFAULT_PERCENTILES),
+        usedefault=True,
+        desc="Intensity percentiles the brain is clipped and rescaled to before clustering, "
+        "so a few very bright voxels (vessels, dura) cannot claim a cluster of their own",
+    )
 
 
 class SegmentationOutputSpec(TraitedSpec):
@@ -28,7 +34,13 @@ class SegmentationOutputSpec(TraitedSpec):
 
 
 class SegmentationInterface(StepInterface):
-    """K-means on intensity: the pipeline's original GM / WM / CSF segmentation."""
+    """K-means on intensity: the pipeline's original GM / WM / CSF segmentation.
+
+    The input is the bias-corrected brain, the same image FAST and Atropos get.
+    Its intensities are clipped and rescaled exactly like the enhancement step
+    does, but not histogram-equalised: equalisation flattens the histogram, and
+    K-means on a flat histogram cuts every brain into three equal thirds.
+    """
 
     input_spec = SegmentationInputSpec
     output_spec = SegmentationOutputSpec
@@ -44,6 +56,7 @@ class SegmentationInterface(StepInterface):
         logger.info(f"Output folder: {output_segmentation_folder}")
 
         data, affine = load_nii(input_file)
+        data = rescale_intensity(data, self.inputs.percentiles)
         labels = kmeans_cluster(data, N_CLUSTERS)
         targets = dict(zip(("gm", "wm", "csf"), get_target_labels(labels, data)))
 
