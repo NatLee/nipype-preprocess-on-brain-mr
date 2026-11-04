@@ -75,6 +75,9 @@ def test_methods_and_3d_can_be_switched_off(pairs, tmp_path):
     names = set(wf.list_node_names())
     assert not names & {"segmentation_fast", "segmentation_atropos", "render_3d"}
     assert "analysis" in names
+    # Regression: an unconnected join field made the cohort step crash with --no-3d.
+    assert "gif_files" not in wf.get_node("cohort_summary").joinfield
+    assert "gif_files" in workflow.build_workflow(pairs, tmp_path / "output").get_node("cohort_summary").joinfield
     with pytest.raises(ValueError, match="Unknown segmentation"):
         workflow.build_workflow(pairs, tmp_path / "output", methods=["spm"])
 

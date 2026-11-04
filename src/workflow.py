@@ -120,7 +120,9 @@ def build_workflow(
     cohort_node = JoinNode(
         CohortSummaryInterface(),
         joinsource="process_pair",
-        joinfield=["volumetrics_files", "agreement_files", "quality_files", "report_files", "gif_files"],
+        # A join field must be connected, so the GIFs are only joined when they are drawn.
+        joinfield=["volumetrics_files", "agreement_files", "quality_files", "report_files"]
+        + (["gif_files"] if render_3d else []),
         name="cohort_summary",
     )
     cohort_node.inputs.output_root = str(output_dir)
