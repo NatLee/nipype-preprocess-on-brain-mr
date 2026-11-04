@@ -14,7 +14,7 @@ from nipype.interfaces.base import (
 
 from analysis import figures
 from analysis.report import relative, render_page
-from analysis.tissue import reference_method
+from analysis.tissue import METHOD_NAMES, reference_method
 from utils.paths import prepare_step_dir
 
 FOLDER_NAME = "cohort"
@@ -69,7 +69,7 @@ class CohortSummaryInterface(SimpleInterface):
         chart = figures.volume_bars(
             [{"label": s["subject"], **s} for s in subjects],
             folder / "volumes.png",
-            title="Tissue volumes per subject",
+            title=f"Tissue volumes per subject ({METHOD_NAMES[reference]})",
         )
         index_file = render_page(
             "index.html.j2",
