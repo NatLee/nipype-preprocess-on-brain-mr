@@ -190,9 +190,26 @@ def segmentation_overlays(
         return _save(fig, out_file)
 
 
-def _relative_to_wm(image: np.ndarray, labels: np.ndarray) -> np.ndarray:
+HISTOGRAM_RANGE = 1.6  # x axis: 0 to 1.6 times the white-matter median
+HISTOGRAM_BINS = 128
+
+
+def _wm_median(image: np.ndarray, labels: np.ndarray) -> float:
     wm = image[labels == TISSUE_LABEL["wm"]]
-    return image / (np.median(wm) if wm.size else 1.0)
+    return float(np.median(wm)) if wm.size else 1.0
+
+
+def histogram_edges(image: np.ndarray, scale: float) -> np.ndarray:
+    """Bin edges on the relative axis (intensity / scale).
+
+    When the voxels hold whole numbers (an int16 scan), every bin spans the
+    same number of integer levels; equal-width bins would catch 3 levels in
+    some bins and 4 in others and draw a comb instead of a histogram.
+    """
+    if not np.array_equal(image, np.round(image)):
+        return np.linspace(0, HISTOGRAM_RANGE, HISTOGRAM_BINS + 1)
+    step = max(1.0, float(np.round(HISTOGRAM_RANGE * scale / HISTOGRAM_BINS)))
+    return (np.arange(0, HISTOGRAM_RANGE * scale + step, step) - 0.5) / scale
 
 
 def n4_figure(
@@ -214,7 +231,6 @@ def n4_figure(
     relative_bias = np.where(brain, bias / np.median(bias[brain]), np.nan)
     spread = float(np.nanpercentile(np.abs(relative_bias - 1), 99)) or 0.01
     centre = _centre(brain.astype(np.float32))
-    bins = np.linspace(0, 1.6, 129)
 
     with plt.rc_context(_style()):
         fig = plt.figure(figsize=(11, 4.6))
@@ -232,7 +248,8 @@ def n4_figure(
 
         for row, (name, image) in enumerate((("Before N4", pre), ("After N4", post))):
             ax = fig.add_subplot(grid[row, 2])
-            values = _relative_to_wm(image, tissue)
+            scale = _wm_median(image, tissue)
+            values, bins = image / scale, histogram_edges(image[brain], scale)
             ax.hist(values[brain], bins=bins, color=THEME["ink_muted"], alpha=0.18, label="Whole brain")
             for t in TISSUES:
                 ax.hist(

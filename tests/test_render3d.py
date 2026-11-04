@@ -50,3 +50,4 @@ def test_empty_label_map_is_a_clear_error(tmp_path, phantom):
     nib.save(nib.Nifti1Image(np.zeros((8, 8, 8), np.uint8), phantom.affine), empty)
     with pytest.raises(ValueError, match="no grey or white matter"):
         render3d.brain_surface(empty)
+
