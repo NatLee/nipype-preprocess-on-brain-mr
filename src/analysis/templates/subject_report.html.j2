@@ -1,12 +1,13 @@
 {% extends "base.html.j2" %}
 {% block title %}{{ subject }} · brain MRI QC report{% endblock %}
 {% block body %}
-{% set ref = volumes | selectattr("method", "equalto", reference) | first %}
+{% set ref = volumes | selectattr("method", "equalto", primary) | first %}
 <header>
   <p><a href="{{ index_href }}">&larr; All subjects</a></p>
   <h1>{{ subject }}</h1>
   <p>T1-weighted scan <code>{{ input_name }}</code>, processed with nipype {{ nipype_version }}.
-     Numbers below use the {{ METHOD_NAMES[reference] }} segmentation unless a table says otherwise.</p>
+     Numbers below use the {{ METHOD_NAMES[primary] }} segmentation (the primary one, chosen with
+     <code>--segmentation</code>) unless a table says otherwise.</p>
 </header>
 
 <section class="tiles" aria-label="Summary">
@@ -62,7 +63,7 @@ matter peaks before and after. Sharper, better separated peaks mean the tissues 
 </table></div>
 <p class="lead">Inside the brain the removed field ranged from {{ ((quality.bias_p01 - 1) * 100) | num(1) }}% to
 {{ "%+.1f" | format((quality.bias_p99 - 1) * 100) }}% around its median (1st&ndash;99th percentile).
-The tissue masks for these numbers come from the {{ METHOD_NAMES[quality.tissue_masks_from] }} segmentation
+The tissue masks for these numbers come from the {{ METHOD_NAMES[quality.primary_method] }} segmentation
 of the corrected image, so read the before/after gap as indicative rather than exact.</p>
 
 <h2>3 · Tissue segmentation, {{ volumes | length }} way{{ "s" if volumes | length != 1 }}</h2>
@@ -101,15 +102,16 @@ which gives the size in the original scan. The shares do not depend on that scal
 {% if figures.gif %}
 <h2>4 · The brain in 3D</h2>
 <p class="lead">The outer surface of grey + white matter, built with marching cubes from the
-{{ METHOD_NAMES[reference] }} labels. Colour shows how deep the grey matter is under each point: light on
+{{ METHOD_NAMES[primary] }} labels. Colour shows how deep the grey matter is under each point: light on
 thin ridges of cortex, dark where the surface spans a fold.</p>
 <figure><img src="{{ figures.gif }}" alt="Rotating 3D view of the brain surface" width="480">
 <figcaption><a href="{{ figures.html }}">Open the interactive 3D viewer</a> (rotate, zoom, hover for values).</figcaption></figure>
 {% endif %}
 
 {% if figures.maps %}
-<h2>5 · Probability maps (original output)</h2>
-<p class="lead">The K-means maps the pipeline has always drawn with nilearn, over the registered scan.</p>
+<h2>5 · Tissue maps (nilearn)</h2>
+<p class="lead">The three maps the pipeline has always drawn with nilearn over the registered scan, now
+from the {{ METHOD_NAMES[primary] }} segmentation.</p>
 {% for title, src in figures.maps %}
 <figure><img src="{{ src }}" alt="{{ title }}"><figcaption>{{ title }}</figcaption></figure>
 {% endfor %}

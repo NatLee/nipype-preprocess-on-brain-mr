@@ -10,8 +10,9 @@
 A brain MRI preprocessing pipeline built from [nipype](https://nipype.readthedocs.io/) nodes, small
 enough to read in an afternoon and complete enough to learn from. Point it at T1-weighted scans and
 each one is AC-PC aligned, registered to the MNI152 template, skull stripped, bias corrected and split
-into grey matter, white matter and CSF. Then it goes further than the classic tutorial: it segments the
-brain three different ways and measures how much they agree, turns the labels into tissue volumes,
+into grey matter, white matter and CSF with FSL FAST (or K-means, the original method, or ANTs Atropos;
+your choice). Then it goes further than the classic tutorial: it segments the brain all three ways and
+measures how much they agree, turns the labels into tissue volumes,
 checks what bias correction actually changed, renders the brain in 3D, and writes an HTML report per
 scan. Everything runs in one Docker image, on CPU, with openly licensed demo scans.
 
@@ -31,37 +32,42 @@ scan. Everything runs in one Docker image, on CPU, with openly licensed demo sca
 ```mermaid
 flowchart TD
     scan[/"T1-weighted scan (.nii or .nii.gz)"/]
-    subgraph original["The original nipype chain"]
+    subgraph prep["Preprocessing (original chain)"]
         acpc["AC-PC detection and alignment<br/>ART acpcdetect"]
         gz["gzip"]
         reorient["Reorient to standard<br/>FSL fslreorient2std"]
         flirt["Affine registration to MNI152<br/>FSL FLIRT, 12 dof"]
         bet["Skull stripping<br/>FSL BET"]
         n4["Bias-field correction<br/>ANTs N4"]
-        enhance["Enhancement for viewing<br/>median filter, rescale, histogram equalisation"]
-        kmeans["GM / WM / CSF by K-means<br/>scikit-learn"]
-        maps["Probability maps<br/>nilearn"]
-        final["final_output/"]
+        enhance["Histogram-equalised view<br/>for the report"]
     end
-    subgraph added["Added analysis"]
-        fast["FSL FAST"]
+    subgraph seg["Tissue segmentation"]
+        fast["FSL FAST<br/>primary by default"]
+        kmeans["K-means<br/>the original method"]
         atropos["ANTs Atropos"]
+    end
+    subgraph out["Outputs and analysis"]
+        maps["GM / WM / CSF maps<br/>nilearn"]
+        final["final_output/"]
         analysis["Volumes, TIV, Dice agreement,<br/>CJV / CNR before and after N4"]
         render["3D surface: marching cubes<br/>turntable GIF + interactive page"]
         report["HTML report per scan"]
         index["index.html for the whole run"]
     end
     scan --> acpc --> gz --> reorient --> flirt --> bet --> n4 --> enhance
-    n4 --> kmeans
-    flirt --> maps
-    kmeans --> maps --> final
-    acpc --> final
     n4 --> fast
+    n4 --> kmeans
     n4 --> atropos
-    kmeans --> analysis
+    fast -- "primary (--segmentation)" --> maps
+    fast -- primary --> render
+    kmeans -. "--segmentation kmeans" .-> maps
+    atropos -. "--segmentation atropos" .-> maps
+    flirt --> maps
+    maps --> final
+    acpc --> final
     fast --> analysis
+    kmeans --> analysis
     atropos --> analysis
-    fast --> render
     analysis --> report
     render --> report
     maps --> report
@@ -118,11 +124,14 @@ docker run --rm --memory 8g -v "$PWD/data:/data:ro" -v "$PWD/output:/output" nip
 # Three scans in parallel
 docker run ... nipype-preprocess-on-brain-mr python workflow.py --n-procs 3
 
-# Only the original K-means segmentation, no 3D render
-docker run ... nipype-preprocess-on-brain-mr python workflow.py --methods --no-3d
+# Use ANTs Atropos for the tissue maps, the 3D brain and the summary (FAST is the default)
+docker run ... nipype-preprocess-on-brain-mr python workflow.py --segmentation atropos
 
-# K-means plus FAST, on the 2 mm template (8 times fewer voxels, a few minutes per scan)
-docker run ... nipype-preprocess-on-brain-mr python workflow.py --methods fast \
+# Like the original pipeline: K-means only, no comparison, no 3D render
+docker run ... nipype-preprocess-on-brain-mr python workflow.py --segmentation kmeans --methods --no-3d
+
+# FAST compared with K-means only, on the 2 mm template (8 times fewer voxels, a few minutes per scan)
+docker run ... nipype-preprocess-on-brain-mr python workflow.py --methods kmeans \
     --reference /opt/fsl/data/standard/MNI152_T1_2mm.nii.gz
 
 # All options
@@ -142,9 +151,9 @@ output/
 └── sub-01_T1w/
     ├── acpc/                   AC-PC oriented scan, landmark previews, transform matrices
     ├── zip/  orient2std/  registration/  skull_stripping/  bias_correction/  enhancement/
-    ├── segmentation/           K-means labels and maps (the original output)
+    ├── segmentation/           K-means labels and weighted images (the original output)
     ├── segmentation_fast/  segmentation_atropos/   the other two methods
-    ├── draw_segmentation/      GM@map.png, WM@map.png, CSF@map.png (nilearn)
+    ├── draw_segmentation/      GM@map.png, WM@map.png, CSF@map.png (nilearn, primary method)
     ├── analysis/               volumetrics.csv, agreement.csv, quality.json
     ├── render3d/               brain_3d.gif, brain_3d.html (interactive)
     ├── report/index.html       the QC report for this scan
@@ -185,6 +194,27 @@ Results for the three demo scans (1 mm template, FSL FAST volumes at each scan's
 
 These are three healthy adults aged 24 to 27, and FAST puts grey matter at about 45% of the
 intracranial volume and white matter at about a third. N4 lowered the grey/white CJV on every scan.
+
+### Why FSL FAST is the default
+
+The tissue maps (`GM@map.png` and friends, `final_output/`), the QC numbers, the 3D brain and the
+summary page all come from one primary segmentation. It used to be K-means; since November 2026 it
+is FSL FAST (`--segmentation kmeans` brings the old choice back, and all three methods still run for
+the comparison). K-means has no spatial model and no intensity model: it
+sorts every voxel by brightness alone, so the in-between voxels on the border of grey and white matter
+are cut by a hard threshold. FAST models partial-volume voxels at tissue borders, neighbourhood
+smoothness and the remaining bias, and it is the most widely used and validated of the three (it is the
+FSL standard behind SIENAX, FSL-VBM and `fsl_anat`). Even on the corrected intensities, K-means gives
+about 5 to 7 points less grey matter and 2 to 4 points more white matter than FAST on the demo scans:
+
+| Scan | K-means CSF / GM / WM | FAST CSF / GM / WM | Atropos CSF / GM / WM |
+|---|---:|---:|---:|
+| sub-01 | 24.4 / 39.7 / 35.9% | 21.3 / 45.1 / 33.6% | 25.2 / 38.4 / 36.4% |
+| sub-02 | 22.1 / 39.7 / 38.2% | 21.4 / 44.4 / 34.1% | 22.4 / 39.2 / 38.4% |
+| sub-03 | 24.2 / 39.0 / 36.7% | 20.6 / 45.7 / 33.8% | 26.8 / 37.3 / 35.9% |
+
+Atropos, which has a spatial model but no partial-volume model, lands close to K-means here. The
+volumes CSV and every report keep all three, so you can see the spread for your own scans.
 
 ### Why K-means no longer reads the equalised image
 

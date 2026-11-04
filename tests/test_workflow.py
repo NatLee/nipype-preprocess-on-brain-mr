@@ -79,16 +79,42 @@ def test_every_segmentation_reads_the_corrected_brain(pairs, tmp_path):
     assert ("enhancement", "qc_report") in connections  # the equalised image is still shown
 
 
+@pytest.mark.parametrize(
+    "primary, node", [("fast", "segmentation_fast"), ("atropos", "segmentation_atropos"), ("kmeans", "segmentation")]
+)
+def test_downstream_steps_read_the_chosen_primary_segmentation(pairs, tmp_path, primary, node):
+    """Regression (user decision): maps, 3D, QC numbers and summary follow --segmentation."""
+    wf = workflow.build_workflow(pairs, tmp_path / "output", primary=primary)
+    connections = edges(wf, tmp_path)
+    for tissue in ("gm", "wm", "csf"):
+        assert (node, f"draw_{tissue}_segmentation") in connections
+        others = set(workflow.SEGMENTATION_NODES.values()) - {workflow.SEGMENTATION_NODES[primary]}
+        assert not any((name, f"draw_{tissue}_segmentation") in connections for name, _ in others)
+    assert (node, "render_3d") in connections
+    assert wf.get_node("analysis").inputs.primary_method == primary
+    assert wf.get_node("cohort_summary").inputs.primary_method == primary
+    # The comparison still runs all three methods.
+    assert {"segmentation", "segmentation_fast", "segmentation_atropos"} <= set(wf.list_node_names())
+
+
+def test_the_primary_method_always_runs(pairs, tmp_path):
+    names = set(workflow.build_workflow(pairs, tmp_path / "output", primary="atropos", methods=[]).list_node_names())
+    assert "segmentation_atropos" in names
+    assert not names & {"segmentation", "segmentation_fast"}
+
+
 def test_methods_and_3d_can_be_switched_off(pairs, tmp_path):
     wf = workflow.build_workflow(pairs, tmp_path / "output", methods=[], render_3d=False)
     names = set(wf.list_node_names())
-    assert not names & {"segmentation_fast", "segmentation_atropos", "render_3d"}
-    assert "analysis" in names
+    assert not names & {"segmentation", "segmentation_atropos", "render_3d"}
+    assert {"segmentation_fast", "analysis"} <= names
     # Regression: an unconnected join field made the cohort step crash with --no-3d.
     assert "gif_files" not in wf.get_node("cohort_summary").joinfield
     assert "gif_files" in workflow.build_workflow(pairs, tmp_path / "output").get_node("cohort_summary").joinfield
     with pytest.raises(ValueError, match="Unknown segmentation"):
         workflow.build_workflow(pairs, tmp_path / "output", methods=["spm"])
+    with pytest.raises(ValueError, match="Unknown segmentation"):
+        workflow.build_workflow(pairs, tmp_path / "output", primary="spm")
 
 
 def test_reference_template_reaches_flirt(pairs, tmp_path):
@@ -109,7 +135,10 @@ def test_graphs_are_drawn_into_the_output_folder(pairs, tmp_path):
 def test_defaults_match_the_original_script():
     args = workflow.parse_args([])
     assert (args.data_dir, args.output_dir) == (Path("/data"), Path("/output"))
-    assert args.methods == ["fast", "atropos"] and args.render_3d and args.n_procs == 1
+    assert args.render_3d and args.n_procs == 1
+    assert args.segmentation == "fast"  # user decision: FAST, not K-means, is the primary method
+    assert args.methods == ["kmeans", "fast", "atropos"]  # the comparison runs all three
+    assert workflow.parse_args(["--segmentation", "kmeans"]).segmentation == "kmeans"
 
 
 def test_main_explains_bad_input_folders(tmp_path):

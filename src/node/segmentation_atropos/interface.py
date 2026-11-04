@@ -3,7 +3,7 @@ from nipype.interfaces.ants import Atropos
 from nipype.interfaces.base import File
 
 from node.base import StepInputSpec, StepInterface
-from node.tissue_output import TissueLabelsOutputSpec, save_tissue_labels
+from node.tissue_output import ToolSegmentationOutputSpec, tissue_outputs
 from utils.paths import nii_stem
 
 
@@ -12,10 +12,10 @@ class AtroposSegmentationInputSpec(StepInputSpec):
 
 
 class AtroposSegmentationInterface(StepInterface):
-    """Tissue segmentation with ANTs Atropos (Gaussian mixture + Markov random field, K-means start)."""
+    """Tissue segmentation with ANTs Atropos (Gaussian mixture + Markov random field)."""
 
     input_spec = AtroposSegmentationInputSpec
-    output_spec = TissueLabelsOutputSpec
+    output_spec = ToolSegmentationOutputSpec
     step_name = "segmentation_atropos"
 
     def _run_interface(self, runtime):
@@ -39,11 +39,14 @@ class AtroposSegmentationInterface(StepInterface):
             convergence_threshold=0.001,
             use_random_seed=False,  # a fixed seed, so the same scan always gives the same labels
             out_classified_image_name=str(folder / f"{stem}_atropos_labels.nii.gz"),
+            save_posteriors=True,
+            output_posteriors_name_template=f"{stem}_atropos_posterior_%02d.nii.gz",
         ).run(cwd=str(folder))
 
+        # Atropos writes one posterior probability map per class, in class order 1..k.
         raw_labels = result.outputs.classified_image
         self._results["raw_labels_file"] = raw_labels
-        self._results["tissue_labels_file"] = save_tissue_labels(
-            raw_labels, input_file, folder / f"{stem}_tissue_labels.nii.gz"
-        ).as_posix()
+        self._results.update(
+            tissue_outputs(raw_labels, input_file, result.outputs.posteriors, folder / f"{stem}_tissue_labels.nii.gz")
+        )
         return runtime

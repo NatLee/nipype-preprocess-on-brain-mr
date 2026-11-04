@@ -1,9 +1,10 @@
 from loguru import logger
-from nipype.interfaces.base import File, TraitedSpec, traits
+from nipype.interfaces.base import File, traits
 
 from node.base import StepInputSpec, StepInterface
 from node.enhancement.utils import DEFAULT_PERCENTILES, rescale_intensity
 from node.segmentation.utils import get_target_labels, kmeans_cluster, segment, tissue_labels
+from node.tissue_output import TissueSegmentationOutputSpec
 from utils.load_nii import load_nii
 from utils.paths import nii_stem
 from utils.save_nii import save_nii
@@ -21,7 +22,9 @@ class SegmentationInputSpec(StepInputSpec):
     )
 
 
-class SegmentationOutputSpec(TraitedSpec):
+class SegmentationOutputSpec(TissueSegmentationOutputSpec):
+    # The original outputs, kept as they were. The shared fields (tissue_labels_file and
+    # the <tissue>_map_file maps) are what the rest of the workflow reads.
     gm_segmented_output_file = File(exists=True, desc="Path to GM segmented image")
     wm_segmented_output_file = File(exists=True, desc="Path to WM segmented image")
     csf_segmented_output_file = File(exists=True, desc="Path to CSF segmented image")
@@ -30,7 +33,6 @@ class SegmentationOutputSpec(TraitedSpec):
     wm_labels_output_file = File(exists=True, desc="Path to WM labels image")
     csf_labels_output_file = File(exists=True, desc="Path to CSF labels image")
 
-    tissue_labels_output_file = File(exists=True, desc="Tissue label map: 0 background, 1 CSF, 2 GM, 3 WM")
 
 
 class SegmentationInterface(StepInterface):
@@ -67,8 +69,9 @@ class SegmentationInterface(StepInterface):
             save_nii(segment(labels, data, target), str(segmented_path), affine)
             self._results[f"{tissue}_labels_output_file"] = labels_path.as_posix()
             self._results[f"{tissue}_segmented_output_file"] = segmented_path.as_posix()
+            self._results[f"{tissue}_map_file"] = segmented_path.as_posix()
 
         tissue_path = output_segmentation_folder / f"{nii_stem(input_file)}_tissue_labels.nii.gz"
         save_nii(tissue_labels(labels, data), str(tissue_path), affine)
-        self._results["tissue_labels_output_file"] = tissue_path.as_posix()
+        self._results["tissue_labels_file"] = tissue_path.as_posix()
         return runtime

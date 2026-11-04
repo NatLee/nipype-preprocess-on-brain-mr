@@ -18,6 +18,14 @@ TISSUE_NAMES = {"csf": "CSF", "gm": "Grey matter", "wm": "White matter"}
 TISSUE_LABEL = {tissue: index + 1 for index, tissue in enumerate(TISSUES)}
 
 
+def classes_by_intensity(labels: np.ndarray, image: np.ndarray) -> list[int]:
+    """The non-zero class values of `labels`, from the darkest to the brightest in `image`."""
+    labels = np.asarray(labels)
+    classes = [int(value) for value in np.unique(labels) if value != 0]
+    means = [float(np.mean(image[labels == value])) for value in classes]
+    return [classes[index] for index in np.argsort(means)]
+
+
 def order_labels_by_intensity(labels: np.ndarray, image: np.ndarray) -> np.ndarray:
     """Renumber the non-zero classes of `labels` 1..k from darkest to brightest in `image`.
 
@@ -25,11 +33,9 @@ def order_labels_by_intensity(labels: np.ndarray, image: np.ndarray) -> np.ndarr
     numbering mean the same tissue whatever method produced it.
     """
     labels = np.asarray(labels)
-    classes = [value for value in np.unique(labels) if value != 0]
-    means = [float(np.mean(image[labels == value])) for value in classes]
     ordered = np.zeros(labels.shape, dtype=np.uint8)
-    for new_label, index in enumerate(np.argsort(means), start=1):
-        ordered[labels == classes[index]] = new_label
+    for new_label, value in enumerate(classes_by_intensity(labels, image), start=1):
+        ordered[labels == value] = new_label
     return ordered
 
 
@@ -61,17 +67,11 @@ def agreement(label_maps: Mapping[str, np.ndarray]) -> list[dict]:
             )
     return rows
 
-# Segmentation methods the pipeline can run, in display order. K-means is the
-# original method and always runs; the others are optional.
+# Segmentation methods the pipeline can run, in display order.
 METHOD_NAMES = {"kmeans": "K-means", "fast": "FSL FAST", "atropos": "ANTs Atropos"}
-# Which segmentation to use when one is needed for the QC numbers and the 3D
-# surface: FAST is the most widely used of the three, K-means the fallback.
-REFERENCE_PREFERENCE = ("fast", "atropos", "kmeans")
-
-
-def reference_method(available) -> str:
-    """The preferred method among the ones that ran."""
-    for method in REFERENCE_PREFERENCE:
-        if method in available:
-            return method
-    raise ValueError("no segmentation available")
+# The primary segmentation feeds the probability maps, final_output/, the QC
+# numbers and the 3D surface (python workflow.py --segmentation). FAST by
+# default: the user chose it on 2026-11-04 over K-means, the original method,
+# because K-means has no spatial or intensity model and moves the grey/white
+# border (see README, "Why FSL FAST is the default").
+DEFAULT_PRIMARY_METHOD = "fast"

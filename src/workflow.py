@@ -25,7 +25,7 @@ from nipype.interfaces.utility import Merge
 from nipype.pipeline import JoinNode, Node, Workflow
 
 import config
-from analysis.tissue import METHOD_NAMES, reference_method
+from analysis.tissue import DEFAULT_PRIMARY_METHOD, METHOD_NAMES
 from node.acpc_detect.interface import ACPCDetectInterface
 from node.analysis.interface import AnalysisInterface
 from node.bias_field_correction.interface import BiasFieldCorrectionInterface
@@ -45,8 +45,14 @@ from node.zip.interface import ZipOutputInterface
 from utils.paths import clear_dir, is_nifti, nii_stem
 
 WORKFLOW_NAME = "preprocess_workflow"
-EXTRA_METHODS = tuple(m for m in METHOD_NAMES if m != "kmeans")  # K-means always runs
-# The three probability maps drawn with nilearn: (tissue, title). The titles are also the PNG names.
+# Each segmentation method: its node name and interface. Everything downstream reads the
+# shared outputs (tissue_labels_file, <tissue>_map_file), so adding a method means one row here.
+SEGMENTATION_NODES = {
+    "kmeans": ("segmentation", SegmentationInterface),
+    "fast": ("segmentation_fast", FASTSegmentationInterface),
+    "atropos": ("segmentation_atropos", AtroposSegmentationInterface),
+}
+# The three tissue maps drawn with nilearn: (tissue, title). The titles are also the PNG names.
 SEGMENTATION_MAPS = (("gm", "GM@map"), ("wm", "WM@map"), ("csf", "CSF@map"))
 
 
@@ -86,14 +92,21 @@ def build_workflow(
     output_dir: Path,
     *,
     reference: Path | None = None,
-    methods: Sequence[str] = EXTRA_METHODS,
+    primary: str = DEFAULT_PRIMARY_METHOD,
+    methods: Sequence[str] = tuple(METHOD_NAMES),
     render_3d: bool = True,
     base_dir: Path | None = None,
 ) -> Workflow:
-    """Wire the nodes. `methods` picks the extra segmentations (K-means always runs)."""
-    unknown = set(methods) - set(EXTRA_METHODS)
+    """Wire the nodes.
+
+    `primary` is the segmentation the tissue maps, final_output/, the QC numbers
+    and the 3D surface use; `methods` are the segmentations run next to it for
+    the comparison (the primary one always runs).
+    """
+    unknown = ({primary} | set(methods)) - set(SEGMENTATION_NODES)
     if unknown:
         raise ValueError(f"Unknown segmentation method(s): {', '.join(sorted(unknown))}")
+    run_methods = [m for m in SEGMENTATION_NODES if m in set(methods) | {primary}]
     pairs = [(str(i), str(o)) for i, o in pairs]
 
     workflow = Workflow(name=WORKFLOW_NAME, base_dir=str(base_dir) if base_dir else None)
@@ -113,9 +126,10 @@ def build_workflow(
     skull_stripping_node = Node(SkullStrippingInterface(), name="skull_stripping")
     bias_field_correction_node = Node(BiasFieldCorrectionInterface(), name="bias_field_correction")
     enhancement_node = Node(EnhancementInterface(), name="enhancement")
-    segmentation_node = Node(SegmentationInterface(), name="segmentation")
+    segmentation_nodes = {m: Node(SEGMENTATION_NODES[m][1](), name=SEGMENTATION_NODES[m][0]) for m in run_methods}
+    primary_node = segmentation_nodes[primary]
     final_output_node = Node(OrganizeFinalOutputInterface(), name="final_output")
-    analysis_node = Node(AnalysisInterface(), name="analysis")
+    analysis_node = Node(AnalysisInterface(primary_method=primary), name="analysis")
     report_node = Node(QCReportInterface(), name="qc_report")
     cohort_node = JoinNode(
         CohortSummaryInterface(),
@@ -126,12 +140,13 @@ def build_workflow(
         name="cohort_summary",
     )
     cohort_node.inputs.output_root = str(output_dir)
+    cohort_node.inputs.primary_method = primary
 
     # Every per-subject node writes into the subject's folder.
     per_subject = [
         acpc_node, zip_node, orient2std_node, registration_node, skull_stripping_node,
-        bias_field_correction_node, enhancement_node, segmentation_node, final_output_node,
-        analysis_node, report_node,
+        bias_field_correction_node, enhancement_node, final_output_node, analysis_node, report_node,
+        *segmentation_nodes.values(),
     ]
     for node in per_subject:
         workflow.connect(process_pair_node, "output_folder", node, "output_folder")
@@ -144,40 +159,31 @@ def build_workflow(
     ]
     for upstream, downstream in zip(chain, chain[1:]):
         workflow.connect(upstream, "output_file", downstream, "input_file")
-    # K-means reads the bias-corrected brain like FAST and Atropos do. It used to read the
-    # histogram-equalised image, which made it split every brain into three equal thirds;
-    # the equalised image is still made, for the report.
-    workflow.connect(bias_field_correction_node, "output_file", segmentation_node, "input_file")
+    # Every segmentation reads the bias-corrected brain. (K-means used to read the
+    # histogram-equalised image, which split every brain into three equal thirds; that
+    # image is still made, for the report.)
+    for method, node in segmentation_nodes.items():
+        workflow.connect(bias_field_correction_node, "output_file", node, "input_file")
+        workflow.connect(node, "tissue_labels_file", analysis_node, f"{method}_labels")
+        workflow.connect(node, "tissue_labels_file", report_node, f"{method}_labels")
+    if "atropos" in segmentation_nodes:
+        workflow.connect(skull_stripping_node, "mask_file", segmentation_nodes["atropos"], "mask_file")
 
-    # Probability maps drawn with nilearn over the registered scan (same space as the segmentation).
+    # The primary segmentation's tissue maps, drawn with nilearn over the registered scan
+    # (the same space as the segmentation).
     map_merge = Node(Merge(len(SEGMENTATION_MAPS)), name="collect_maps")
     for index, (tissue, title) in enumerate(SEGMENTATION_MAPS, start=1):
         draw_node = Node(DrawSegmentationInterface(title=title), name=f"draw_{tissue}_segmentation")
         workflow.connect(process_pair_node, "output_folder", draw_node, "output_folder")
         workflow.connect(registration_node, "output_file", draw_node, "background_file")
-        workflow.connect(segmentation_node, f"{tissue}_segmented_output_file", draw_node, "segmented_input_file")
+        workflow.connect(primary_node, f"{tissue}_map_file", draw_node, "segmented_input_file")
         workflow.connect(draw_node, "output_file", final_output_node, f"{tissue}_png_file")
         workflow.connect(draw_node, "output_file", map_merge, f"in{index}")
 
     workflow.connect(acpc_node, "output_file", final_output_node, "acpc_output_file")
     workflow.connect(acpc_node, "output_png_file", final_output_node, "acpc_output_png_file")
 
-    # Extra segmentations on the bias-corrected brain.
-    label_sources = {"kmeans": (segmentation_node, "tissue_labels_output_file")}
-    for method in methods:
-        if method == "fast":
-            node = Node(FASTSegmentationInterface(), name="segmentation_fast")
-        else:
-            node = Node(AtroposSegmentationInterface(), name="segmentation_atropos")
-            workflow.connect(skull_stripping_node, "mask_file", node, "mask_file")
-        workflow.connect(process_pair_node, "output_folder", node, "output_folder")
-        workflow.connect(bias_field_correction_node, "output_file", node, "input_file")
-        label_sources[method] = (node, "tissue_labels_file")
-
     # Volumes, agreement and image-quality numbers.
-    for method, (node, field) in label_sources.items():
-        workflow.connect(node, field, analysis_node, f"{method}_labels")
-        workflow.connect(node, field, report_node, f"{method}_labels")
     workflow.connect(registration_node, "out_matrix_file", analysis_node, "matrix_file")
     workflow.connect(skull_stripping_node, "output_file", analysis_node, "before_n4")
     workflow.connect(skull_stripping_node, "mask_file", analysis_node, "brain_mask")
@@ -206,9 +212,8 @@ def build_workflow(
 
     if render_3d:
         render_node = Node(Render3DInterface(), name="render_3d")
-        node, field = label_sources[reference_method(label_sources)]
         workflow.connect(process_pair_node, "output_folder", render_node, "output_folder")
-        workflow.connect(node, field, render_node, "label_file")
+        workflow.connect(primary_node, "tissue_labels_file", render_node, "label_file")
         workflow.connect(render_node, "gif_file", report_node, "gif_file")
         workflow.connect(render_node, "html_file", report_node, "html_file")
         workflow.connect(render_node, "gif_file", cohort_node, "gif_files")
@@ -243,7 +248,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         epilog=(
             "examples:\n"
             "  python workflow.py                              # /data -> /output, everything on\n"
-            "  python workflow.py --methods fast --no-3d       # K-means + FAST only, skip the 3D render\n"
+            "  python workflow.py --segmentation kmeans --methods --no-3d   # the original K-means only, no 3D\n"
             "  python workflow.py --reference $FSLDIR/data/standard/MNI152_T1_2mm.nii.gz   # 8x fewer voxels"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -254,10 +259,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="where results go, one sub-folder per scan (default: %(default)s)")
     parser.add_argument("--reference", type=Path, default=None,
                         help=f"template to register to (default: $FSLDIR/data/standard/{config.DEFAULT_REFERENCE_NAME})")
-    parser.add_argument("--methods", nargs="*", choices=EXTRA_METHODS, default=list(EXTRA_METHODS),
+    parser.add_argument("--segmentation", choices=list(METHOD_NAMES), default=DEFAULT_PRIMARY_METHOD,
+                        help="primary tissue segmentation, used for the tissue maps, final_output/, the QC "
+                             "numbers and the 3D brain (default: %(default)s)")
+    parser.add_argument("--methods", nargs="*", choices=list(METHOD_NAMES), default=list(METHOD_NAMES),
                         metavar="METHOD",
-                        help=f"extra segmentations to compare with K-means: {' '.join(EXTRA_METHODS)} "
-                             "(default: all; give none to run K-means only)")
+                        help=f"segmentations to run and compare: {' '.join(METHOD_NAMES)} "
+                             "(default: all; the --segmentation one always runs)")
     parser.add_argument("--no-3d", dest="render_3d", action="store_false", help="skip the 3D brain render")
     parser.add_argument("--n-procs", type=int, default=1,
                         help="scans/steps to run in parallel (default: %(default)s, one at a time)")
@@ -288,7 +296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     pairs = prepare_output_folders(input_files, args.output_dir)
     logger.info(f"{len(pairs)} scan(s): {', '.join(p[0].name for p in pairs)}")
     workflow = build_workflow(
-        pairs, args.output_dir, reference=args.reference, methods=args.methods,
+        pairs, args.output_dir, reference=args.reference, primary=args.segmentation, methods=args.methods,
         render_3d=args.render_3d, base_dir=work_dir,
     )
     workflow.config["execution"]["crashdump_dir"] = str(work_dir / "crash")
