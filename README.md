@@ -178,7 +178,7 @@ Results for the three demo scans (1 mm template, FSL FAST volumes at each scan's
 | Scan | TIV (mL) | Grey matter | White matter | CSF | CSF by K-means | CJV before → after N4 | Grey-matter Dice, FAST vs Atropos |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | sub-01 | 1,324 | 45.1% | 33.6% | 21.3% | 32.8% | 0.64 → 0.56 | 0.89 |
-| sub-02 | 1,481 | 44.4% | 34.1% | 21.5% | 33.0% | 0.63 → 0.54 | 0.92 |
+| sub-02 | 1,481 | 44.4% | 34.1% | 21.4% | 33.0% | 0.63 → 0.54 | 0.92 |
 | sub-03 | 1,228 | 45.7% | 33.8% | 20.6% | 32.6% | 0.64 → 0.56 | 0.87 |
 
 These are three healthy adults aged 24 to 27, and FAST puts grey matter at about 45% of the
