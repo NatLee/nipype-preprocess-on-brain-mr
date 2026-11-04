@@ -1,0 +1,14 @@
+# FSL tools the pipeline calls, from FSL's own conda channel. Only these
+# packages (and what they depend on) go into the image, instead of the
+# whole multi-gigabyte FSL distribution.
+#
+# fslreorient2std
+fsl-misc_scripts
+# flirt (registration)
+fsl-flirt
+# bet / bet2 (skull stripping)
+fsl-bet2
+# fast (tissue segmentation)
+fsl-fast4
+# fslmaths, fslstats, ... (used by the bet script)
+fsl-avwutils

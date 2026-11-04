@@ -1,6 +1,15 @@
-loguru
-
-scikit-learn==1.4.0
-scikit-image==0.22.0
-
-nilearn==0.10.3
+# Python packages the pipeline imports. The neuroimaging command-line tools
+# (FSL, ANTs, ART) are not on PyPI; the Dockerfile installs them.
+nipype==1.12.0
+nibabel==5.4.2
+nilearn==0.14.1
+numpy==2.5.4
+scipy==1.18.1
+scikit-learn==1.9.1
+scikit-image==0.26.0
+pandas==3.1.0
+matplotlib==3.11.2
+plotly==7.1.0
+pillow==13.0.0
+jinja2==3.1.6
+loguru==0.7.3

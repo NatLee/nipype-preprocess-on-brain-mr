@@ -1,0 +1,10 @@
+# Only src/, utils/, docker/, tests/ and the requirement files go into the image.
+.git
+.github
+data
+output
+docs
+**/__pycache__
+**/*.pyc
+utils/*/doc
+utils/atra1.0_LinuxCentOS6.7
