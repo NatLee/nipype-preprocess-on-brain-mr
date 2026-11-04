@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    # Everything that is pure Python: the enhancement and K-means code (checked
+    # against the original implementation), volumes, QC numbers, figures, the 3D
+    # render, the HTML pages and how the workflow is wired. No FSL / ANTs needed.
+    name: Unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install graphviz (draws the workflow graph)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends graphviz
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -m "not neuro"
+
+  pipeline:
+    # The real thing: build the image with FSL, ANTs and acpcdetect, download one
+    # CC0 scan and run the whole workflow on it at 2 mm.
+    name: Full pipeline in Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: test
+          load: true
+          tags: nipype-preprocess-on-brain-mr:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Download one demo scan (OpenNeuro ds000001, CC0)
+        run: |
+          mkdir -p data ci-output
+          docker run --rm -v "$PWD/data:/data" nipype-preprocess-on-brain-mr:test python /src/fetch_demo_data.py --subjects 1
+      - name: Run the workflow and check every output
+        run: >
+          docker run --rm --memory 8g
+          -v "$PWD/data:/data:ro" -v "$PWD/ci-output:/ci-output" -e E2E_OUTPUT_DIR=/ci-output
+          nipype-preprocess-on-brain-mr:test python -m pytest -m neuro /tests
+      - name: Keep the report and figures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pipeline-report
+          path: |
+            ci-output/index.html
+            ci-output/graph*.png
+            ci-output/cohort/
+            ci-output/*/report/
+            ci-output/*/render3d/
+            ci-output/*/analysis/
+            ci-output/*/acpc/*.png
+            ci-output/*/draw_segmentation/
+          if-no-files-found: warn
+          retention-days: 14

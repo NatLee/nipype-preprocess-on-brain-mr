@@ -1,0 +1,12 @@
+{
+  "dataset": "OpenNeuro ds000001 - Balloon Analog Risk-taking Task",
+  "doi": "10.18112/openneuro.ds000001.v1.0.0",
+  "license": "CC0 (public domain dedication), as stated in the dataset's dataset_description.json",
+  "homepage": "https://openneuro.org/datasets/ds000001",
+  "base_url": "https://s3.amazonaws.com/openneuro.org/ds000001",
+  "files": [
+    {"path": "sub-01/anat/sub-01_T1w.nii.gz", "sha256": "bdb7022ae229c5b8edd16425928c9243c562f84082b9b8e6f97cdba8b9354a98"},
+    {"path": "sub-02/anat/sub-02_T1w.nii.gz", "sha256": "02ed06fb4e3421c620998af9232739be1c3c0526dd7bcf6652bf8522f5bf2944"},
+    {"path": "sub-03/anat/sub-03_T1w.nii.gz", "sha256": "42afa195c735d395e446a37d7127ce5a89bb3e3167d1dd9f84b56a7d108ba87f"}
+  ]
+}

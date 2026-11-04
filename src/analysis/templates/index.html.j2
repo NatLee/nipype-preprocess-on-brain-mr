@@ -1,0 +1,37 @@
+{% extends "base.html.j2" %}
+{% block title %}Brain MRI preprocessing · {{ subjects | length }} subject{{ "s" if subjects | length != 1 }}{% endblock %}
+{% block body %}
+<header>
+  <h1>Brain MRI preprocessing</h1>
+  <p>{{ subjects | length }} subject{{ "s" if subjects | length != 1 }} processed. Volumes use the
+     {{ METHOD_NAMES[reference] }} segmentation, scaled back to each scan's own size.</p>
+</header>
+
+{% if figures.volumes %}
+<figure><img src="{{ figures.volumes }}" alt="Tissue volumes per subject"></figure>
+{% endif %}
+
+<div class="table-wrap"><table>
+  <thead><tr><th>Subject</th><th>TIV (mL)</th>{% for t in TISSUES %}<th>{{ TISSUE_NAMES[t] }}</th>{% endfor %}<th>CJV before &rarr; after N4</th><th>Report</th></tr></thead>
+  <tbody>
+  {% for s in subjects %}
+    <tr><td>{{ s.subject }}</td><td>{{ s.native_tiv_ml | ml }}</td>{% for t in TISSUES %}<td>{{ s[t ~ "_fraction"] | pct }}</td>{% endfor %}
+        <td>{{ s.cjv_before | num(2) }} &rarr; {{ s.cjv_after | num(2) }}</td><td><a href="{{ s.report }}">open</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+{% if gifs %}
+<h2>Brains in 3D</h2>
+<div class="grid-2">
+{% for subject, src in gifs %}
+  <figure><img src="{{ src }}" alt="Rotating 3D brain surface of {{ subject }}" width="320"><figcaption>{{ subject }}</figcaption></figure>
+{% endfor %}
+</div>
+{% endif %}
+
+<h2>Downloads</h2>
+<ul>
+  {% for label, href in files %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}
+</ul>
+{% endblock %}

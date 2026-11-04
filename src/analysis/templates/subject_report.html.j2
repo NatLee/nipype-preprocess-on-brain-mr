@@ -1,0 +1,121 @@
+{% extends "base.html.j2" %}
+{% block title %}{{ subject }} · brain MRI QC report{% endblock %}
+{% block body %}
+{% set ref = volumes | selectattr("method", "equalto", reference) | first %}
+<header>
+  <p><a href="{{ index_href }}">&larr; All subjects</a></p>
+  <h1>{{ subject }}</h1>
+  <p>T1-weighted scan <code>{{ input_name }}</code>, processed with nipype {{ nipype_version }}.
+     Numbers below use the {{ METHOD_NAMES[reference] }} segmentation unless a table says otherwise.</p>
+</header>
+
+<section class="tiles" aria-label="Summary">
+  <div class="tile hero">
+    <div class="label">Total intracranial volume</div>
+    <div class="value">{{ ref.native_tiv_ml | ml }} mL</div>
+    <div class="note">CSF + grey + white matter, at the scan's own size</div>
+  </div>
+  {% for t in TISSUES %}
+  <div class="tile">
+    <div class="label"><span class="swatch" style="background: var(--{{ t }})"></span>{{ TISSUE_NAMES[t] }}</div>
+    <div class="value">{{ ref[t ~ "_fraction"] | pct }}</div>
+    <div class="note">{{ ref["native_" ~ t ~ "_ml"] | ml }} mL</div>
+  </div>
+  {% endfor %}
+  <div class="tile">
+    <div class="label">Grey/white spread (CJV)</div>
+    <div class="value">{{ quality.before_n4.cjv | num(2) }} &rarr; {{ quality.after_n4.cjv | num(2) }}</div>
+    <div class="note">before &rarr; after bias correction; lower is better</div>
+  </div>
+</section>
+
+<h2>1 · The scan after each step</h2>
+<p class="lead">Each column is the same brain after one more step: the original scan, AC-PC alignment,
+affine registration to the MNI152 template, skull stripping, N4 bias correction, and the contrast
+enhancement that the K-means step reads.</p>
+<figure><img src="{{ figures.pipeline }}" alt="Sagittal, coronal and axial slices of the scan after every processing step">
+<figcaption>Slices pass through the centre of the head (or of the brain, once the skull is gone).</figcaption></figure>
+
+{% if figures.landmarks %}
+<h3>AC-PC landmarks found by acpcdetect</h3>
+<div class="grid-2">
+  <figure><img src="{{ figures.landmarks }}" alt="Mid-sagittal slice with the detected AC, PC and mid-plane">
+  <figcaption>Green + marks the anterior commissure (AC), red + the posterior commissure (PC). Check them before trusting the rest.</figcaption></figure>
+  <figure><img src="{{ figures.acpc_png }}" alt="Middle sagittal slice of the AC-PC oriented scan">
+  <figcaption>Middle sagittal slice after AC-PC orientation.</figcaption></figure>
+</div>
+{% endif %}
+
+<h2>2 · Bias field correction (N4)</h2>
+<p class="lead">MRI scanners make some parts of the head look brighter than others. N4 estimates that
+smooth drift and divides it out. The maps show the drift it found; the histograms show the grey and white
+matter peaks before and after. Sharper, better separated peaks mean the tissues are easier to tell apart.</p>
+<figure><img src="{{ figures.n4 }}" alt="Bias field map and tissue intensity histograms before and after N4"></figure>
+<div class="table-wrap"><table>
+  <thead><tr><th>Measure</th><th>Before N4</th><th>After N4</th><th>Better when</th></tr></thead>
+  <tbody>
+    <tr><td>CJV, grey/white joint variation</td><td>{{ quality.before_n4.cjv | num }}</td><td>{{ quality.after_n4.cjv | num }}</td><td>lower</td></tr>
+    <tr><td>CNR, grey/white contrast-to-noise</td><td>{{ quality.before_n4.cnr | num }}</td><td>{{ quality.after_n4.cnr | num }}</td><td>higher</td></tr>
+    <tr><td>White-matter SNR</td><td>{{ quality.before_n4.snr_wm | num(2) }}</td><td>{{ quality.after_n4.snr_wm | num(2) }}</td><td>higher</td></tr>
+  </tbody>
+</table></div>
+<p class="lead">Inside the brain the removed field ranged from {{ ((quality.bias_p01 - 1) * 100) | num(1) }}% to
+{{ "%+.1f" | format((quality.bias_p99 - 1) * 100) }}% around its median (1st&ndash;99th percentile).
+The tissue masks for these numbers come from the {{ METHOD_NAMES[quality.tissue_masks_from] }} segmentation
+of the corrected image, so read the before/after gap as indicative rather than exact.</p>
+
+<h2>3 · Tissue segmentation, {{ volumes | length }} way{{ "s" if volumes | length != 1 }}</h2>
+<p class="lead">K-means (the pipeline's original method) only looks at brightness. FSL FAST and ANTs
+Atropos also use a spatial model (neighbouring voxels tend to share a tissue), which usually gives
+cleaner boundaries. All of them run on the same registered brain.</p>
+<figure><img src="{{ figures.overlays }}" alt="Axial slices with the tissue labels of each method"></figure>
+
+<h3>Volumes</h3>
+<figure><img src="{{ figures.volumes }}" alt="Stacked bars of CSF, grey and white matter volume per method"></figure>
+<div class="table-wrap"><table>
+  <thead><tr><th>Method</th>{% for t in TISSUES %}<th>{{ TISSUE_NAMES[t] }} (mL)</th>{% endfor %}<th>TIV (mL)</th>{% for t in TISSUES %}<th>{{ t | upper }} share</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row in volumes %}
+    <tr><td>{{ row.method_name }}</td>{% for t in TISSUES %}<td>{{ row["native_" ~ t ~ "_ml"] | ml }}</td>{% endfor %}<td>{{ row.native_tiv_ml | ml }}</td>{% for t in TISSUES %}<td>{{ row[t ~ "_fraction"] | pct }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<p class="lead">Volumes are counted in template space and divided by the registration's volume scale
+({{ quality.registration_scale | num(3) }}: the template is that many times the size of this brain),
+which gives the size in the original scan. The shares do not depend on that scale.</p>
+
+{% if agreement %}
+<h3>Agreement between methods</h3>
+<figure><img src="{{ figures.agreement }}" alt="Dice overlap per tissue for every pair of methods"></figure>
+<div class="table-wrap"><table>
+  <thead><tr><th>Pair</th>{% for t in TISSUES %}<th>{{ TISSUE_NAMES[t] }} Dice</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for pair in agreement %}
+    <tr><td>{{ pair.label }}</td>{% for t in TISSUES %}<td>{{ pair[t] | num }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+{% if figures.gif %}
+<h2>4 · The brain in 3D</h2>
+<p class="lead">The outer surface of grey + white matter, built with marching cubes from the
+{{ METHOD_NAMES[reference] }} labels. Colour shows how deep the grey matter is under each point: light on
+thin ridges of cortex, dark where the surface spans a fold.</p>
+<figure><img src="{{ figures.gif }}" alt="Rotating 3D view of the brain surface" width="480">
+<figcaption><a href="{{ figures.html }}">Open the interactive 3D viewer</a> (rotate, zoom, hover for values).</figcaption></figure>
+{% endif %}
+
+{% if figures.maps %}
+<h2>5 · Probability maps (original output)</h2>
+<p class="lead">The K-means maps the pipeline has always drawn with nilearn, over the registered scan.</p>
+{% for title, src in figures.maps %}
+<figure><img src="{{ src }}" alt="{{ title }}"><figcaption>{{ title }}</figcaption></figure>
+{% endfor %}
+{% endif %}
+
+<h2>Files</h2>
+<ul>
+  {% for label, href in files %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}
+</ul>
+{% endblock %}

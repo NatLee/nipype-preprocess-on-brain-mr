@@ -1,4 +1,5 @@
 #!/bin/bash
-
-# Clean files starting with "crash" in ./src directory
-find ./src -name "crash-*.pklz" -exec rm -rf {} \;
+# Delete nipype's crash files ("crash-*.pklz"). The workflow keeps them in
+# ./output/_work/crash (it used to write them into ./src).
+find ./output/_work ./src -name "crash-*.pklz" -delete 2>/dev/null
+exit 0
