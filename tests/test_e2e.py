@@ -51,6 +51,7 @@ NEW_OUTPUTS = [
     "acpc/{s}_ACPC_sagittal.png", "registration/{s}_RAS.mat", "skull_stripping/{s}_RAS_mask.nii.gz",
     "bias_correction/{s}_RAS_bias.nii.gz", "segmentation/{s}_RAS_tissue_labels.nii.gz",
     "segmentation_fast/{s}_RAS_tissue_labels.nii.gz", "segmentation_atropos/{s}_RAS_tissue_labels.nii.gz",
+    "segmentation_fast/{s}_RAS_pve_1.nii.gz", "segmentation_atropos/{s}_RAS_atropos_posterior_02.nii.gz",
     "analysis/volumetrics.csv", "analysis/agreement.csv", "analysis/quality.json",
     "render3d/brain_3d.gif", "render3d/brain_3d.html", "report/index.html",
 ]
@@ -118,3 +119,11 @@ def test_kmeans_shares_follow_fast_not_thirds(run):
     agreement = pd.read_csv(output / scan / "analysis" / "agreement.csv")
     kmeans_fast = agreement[(agreement.method_a == "kmeans") & (agreement.method_b == "fast")]
     assert (kmeans_fast["dice"] > 0.85).all()
+
+
+def test_fast_is_the_primary_segmentation_by_default(run):
+    """User decision (2026-11-04): the tissue maps, QC numbers and summary use FAST, not K-means."""
+    _, output, scan = run
+    quality = json.loads((output / scan / "analysis" / "quality.json").read_text())
+    assert quality["primary_method"] == "fast"
+    assert "FSL FAST segmentation" in (output / "index.html").read_text()

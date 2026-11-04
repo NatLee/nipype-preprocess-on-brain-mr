@@ -4,10 +4,10 @@ from pathlib import Path
 import nibabel as nib
 import pandas as pd
 from loguru import logger
-from nipype.interfaces.base import BaseInterfaceInputSpec, Directory, File, SimpleInterface, TraitedSpec
+from nipype.interfaces.base import BaseInterfaceInputSpec, Directory, File, SimpleInterface, TraitedSpec, traits
 
 from analysis.quality import bias_field_range, contrast_metrics
-from analysis.tissue import METHOD_NAMES, agreement, reference_method
+from analysis.tissue import METHOD_NAMES, agreement
 from analysis.volumetrics import read_fsl_matrix, registration_scale, tissue_volumes, voxel_volume_ml
 from utils.load_nii import load_nii
 from utils.paths import prepare_step_dir
@@ -17,7 +17,8 @@ STEP_NAME = "analysis"
 
 class AnalysisInputSpec(BaseInterfaceInputSpec):
     output_folder = Directory(mandatory=True, desc="Subject output folder")
-    kmeans_labels = File(exists=True, mandatory=True, desc="K-means tissue label map")
+    primary_method = traits.Enum(*METHOD_NAMES, mandatory=True, desc="Segmentation whose masks the QC numbers use")
+    kmeans_labels = File(exists=True, desc="K-means tissue label map (optional)")
     fast_labels = File(exists=True, desc="FSL FAST tissue label map (optional)")
     atropos_labels = File(exists=True, desc="ANTs Atropos tissue label map (optional)")
     matrix_file = File(exists=True, mandatory=True, desc="FLIRT matrix scan -> template")
@@ -69,16 +70,18 @@ class AnalysisInterface(SimpleInterface):
             subject=subject
         ).to_csv(agreement_file, index=False)
 
-        reference = reference_method(label_data)
+        primary = self.inputs.primary_method
+        if primary not in label_data:
+            raise ValueError(f"the primary segmentation ({primary}) has no label map among the inputs")
         before, _ = load_nii(self.inputs.before_n4)
         after, _ = load_nii(self.inputs.after_n4)
         bias, _ = load_nii(self.inputs.bias_field)
         mask, _ = load_nii(self.inputs.brain_mask)
         quality = {
             "subject": subject,
-            "tissue_masks_from": reference,
-            "before_n4": contrast_metrics(before, label_data[reference]),
-            "after_n4": contrast_metrics(after, label_data[reference]),
+            "primary_method": primary,
+            "before_n4": contrast_metrics(before, label_data[primary]),
+            "after_n4": contrast_metrics(after, label_data[primary]),
             **bias_field_range(bias, mask > 0),
             "registration_scale": round(scale, 4),
         }

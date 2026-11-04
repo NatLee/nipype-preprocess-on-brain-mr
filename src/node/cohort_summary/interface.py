@@ -10,11 +10,12 @@ from nipype.interfaces.base import (
     InputMultiObject,
     SimpleInterface,
     TraitedSpec,
+    traits,
 )
 
 from analysis import figures
 from analysis.report import relative, render_page
-from analysis.tissue import METHOD_NAMES, reference_method
+from analysis.tissue import METHOD_NAMES
 from utils.paths import prepare_step_dir
 
 FOLDER_NAME = "cohort"
@@ -22,6 +23,7 @@ FOLDER_NAME = "cohort"
 
 class CohortSummaryInputSpec(BaseInterfaceInputSpec):
     output_root = Directory(exists=True, mandatory=True, desc="The run's output folder (parent of the subjects)")
+    primary_method = traits.Enum(*METHOD_NAMES, mandatory=True, desc="Segmentation the summary table and chart use")
     volumetrics_files = InputMultiObject(File(exists=True), mandatory=True, desc="volumetrics.csv of every subject")
     agreement_files = InputMultiObject(File(exists=True), mandatory=True, desc="agreement.csv of every subject")
     quality_files = InputMultiObject(File(exists=True), mandatory=True, desc="quality.json of every subject")
@@ -54,8 +56,8 @@ class CohortSummaryInterface(SimpleInterface):
         volumes.to_csv(volumetrics_file, index=False)
         agreement.to_csv(agreement_file, index=False)
 
-        reference = reference_method(set(volumes["method"]))
-        primary = volumes[volumes["method"] == reference]
+        primary = self.inputs.primary_method
+        primary_rows = volumes[volumes["method"] == primary]
         reports = {Path(f).parent.parent.name: f for f in self.inputs.report_files}
         subjects = [
             {
@@ -64,19 +66,19 @@ class CohortSummaryInterface(SimpleInterface):
                 "cjv_after": quality[row["subject"]]["after_n4"]["cjv"],
                 "report": relative(reports[row["subject"]], root),
             }
-            for row in primary.to_dict("records")
+            for row in primary_rows.to_dict("records")
         ]
         chart = figures.volume_bars(
             [{"label": s["subject"], **s} for s in subjects],
             folder / "volumes.png",
-            title=f"Tissue volumes per subject ({METHOD_NAMES[reference]})",
+            title=f"Tissue volumes per subject ({METHOD_NAMES[primary]})",
         )
         index_file = render_page(
             "index.html.j2",
             root / "index.html",
             {
                 "subjects": subjects,
-                "reference": reference,
+                "primary": primary,
                 "figures": {"volumes": relative(chart, root)},
                 "gifs": [(Path(g).parent.parent.name, relative(g, root)) for g in (self.inputs.gif_files or [])],
                 "files": [

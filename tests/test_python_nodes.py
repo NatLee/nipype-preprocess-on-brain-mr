@@ -59,7 +59,9 @@ def test_enhancement_and_kmeans_nodes_keep_their_file_names(subject):
         labels_file = Path(getattr(seg.outputs, f"{tissue}_labels_output_file"))
         assert labels_file.name == f"after_n4.nii_{tissue}_labels.nii.gz"  # the pre-refactor names
         assert Path(getattr(seg.outputs, f"{tissue}_segmented_output_file")).exists()
-    labels = nib.load(seg.outputs.tissue_labels_output_file).get_fdata()
+        # The shared map output the downstream steps read is K-means' original weighted image.
+        assert getattr(seg.outputs, f"{tissue}_map_file") == getattr(seg.outputs, f"{tissue}_segmented_output_file")
+    labels = nib.load(seg.outputs.tissue_labels_file).get_fdata()
     truth = nib.load(subject["labels"]).get_fdata()
     assert (labels == truth).mean() > 0.97
 
@@ -80,7 +82,7 @@ def test_kmeans_tissue_shares_follow_the_anatomy_not_thirds(tmp_path):
     truth = tissue_shares(lopsided.labels)
     image_file, _ = lopsided.save(tmp_path)
     result = SegmentationInterface(input_file=str(image_file), output_folder=str(tmp_path / "out")).run()
-    found = tissue_shares(np.asanyarray(nib.load(result.outputs.tissue_labels_output_file).dataobj))
+    found = tissue_shares(np.asanyarray(nib.load(result.outputs.tissue_labels_file).dataobj))
     np.testing.assert_allclose(found, truth, atol=0.03)
 
     # The old input pulls the shares towards equal thirds, far from the truth.
@@ -109,9 +111,10 @@ def test_draw_segmentation_still_accepts_the_old_input_name(subject):
     assert (subject["folder"] / "draw_segmentation" / "GM@map.png").exists()  # the sibling map survives
 
 
-def run_analysis(subject):
+def run_analysis(subject, primary="fast"):
     return AnalysisInterface(
         output_folder=str(subject["folder"]),
+        primary_method=primary,
         kmeans_labels=str(subject["labels"]),
         fast_labels=str(subject["labels"]),
         matrix_file=str(subject["matrix"]),
@@ -130,7 +133,7 @@ def test_analysis_writes_volumes_agreement_and_quality(subject):
     assert volumes["native_tiv_ml"].iloc[0] == pytest.approx(volumes["tiv_ml"].iloc[0] / REGISTRATION_SCALE, rel=1e-3)
     assert set(pd.read_csv(result.outputs.agreement_file)["dice"]) == {1.0}
     quality = json.loads(Path(result.outputs.quality_file).read_text())
-    assert quality["tissue_masks_from"] == "fast"
+    assert quality["primary_method"] == "fast"
     assert quality["after_n4"]["cjv"] < quality["before_n4"]["cjv"]
 
 
@@ -172,6 +175,7 @@ def test_report_render_and_cohort_pages(subject):
 
     cohort = CohortSummaryInterface(
         output_root=str(folder.parent),
+        primary_method="fast",
         volumetrics_files=[analysis.outputs.volumetrics_file],
         agreement_files=[analysis.outputs.agreement_file],
         quality_files=[analysis.outputs.quality_file],
@@ -181,6 +185,29 @@ def test_report_render_and_cohort_pages(subject):
     index = Path(cohort.outputs.index_file).read_text()
     assert 'href="sub-xx/report/index.html"' in index
     assert len(pd.read_csv(cohort.outputs.volumetrics_file)) == 2
+
+
+def test_qc_numbers_follow_the_chosen_primary_method(subject):
+    assert json.loads(Path(run_analysis(subject, "kmeans").outputs.quality_file).read_text())["primary_method"] == "kmeans"
+    with pytest.raises(ValueError, match="primary segmentation \\(atropos\\)"):
+        run_analysis(subject, "atropos")  # no Atropos labels were given
+
+
+def test_tool_maps_are_matched_to_tissues_by_brightness(phantom, tmp_path):
+    """FAST/Atropos number their classes arbitrarily; maps must follow the same order as the labels."""
+    from node.tissue_output import tissue_outputs
+
+    raw = np.choose(phantom.labels, [0, 3, 1, 2])  # tool class 3 = CSF, 1 = GM, 2 = WM
+    raw_file = tmp_path / "raw.nii.gz"
+    nib.save(nib.Nifti1Image(raw.astype(np.int16), phantom.affine), raw_file)
+    image_file = tmp_path / "image.nii.gz"
+    nib.save(nib.Nifti1Image(phantom.image, phantom.affine), image_file)
+    class_maps = [tmp_path / f"class_{c}.nii.gz" for c in (1, 2, 3)]  # map of class value c
+    outputs = tissue_outputs(raw_file, image_file, class_maps, tmp_path / "labels.nii.gz")
+    assert outputs["csf_map_file"].endswith("class_3.nii.gz")
+    assert outputs["gm_map_file"].endswith("class_1.nii.gz")
+    assert outputs["wm_map_file"].endswith("class_2.nii.gz")
+    np.testing.assert_array_equal(np.asanyarray(nib.load(outputs["tissue_labels_file"]).dataobj), phantom.labels)
 
 
 def test_final_output_copies_the_usual_files_and_optional_extras(subject, tmp_path):

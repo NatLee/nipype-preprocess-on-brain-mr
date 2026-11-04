@@ -4,7 +4,7 @@
 <header>
   <h1>Brain MRI preprocessing</h1>
   <p>{{ subjects | length }} subject{{ "s" if subjects | length != 1 }} processed. Volumes use the
-     {{ METHOD_NAMES[reference] }} segmentation, scaled back to each scan's own size.</p>
+     {{ METHOD_NAMES[primary] }} segmentation, scaled back to each scan's own size.</p>
 </header>
 
 {% if figures.volumes %}

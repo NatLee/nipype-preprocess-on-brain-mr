@@ -11,7 +11,6 @@ from analysis.tissue import (
     agreement,
     dice,
     order_labels_by_intensity,
-    reference_method,
 )
 from analysis.volumetrics import read_fsl_matrix, registration_scale, tissue_volumes, voxel_volume_ml
 from phantom import make_phantom
@@ -43,12 +42,19 @@ def test_agreement_has_one_row_per_pair_and_tissue(phantom):
         agreement({"a": phantom.labels, "b": phantom.labels[:-1]})
 
 
-def test_reference_method_prefers_fast_then_atropos_then_kmeans():
-    assert reference_method(METHOD_NAMES) == "fast"
-    assert reference_method({"kmeans", "atropos"}) == "atropos"
-    assert reference_method({"kmeans"}) == "kmeans"
-    with pytest.raises(ValueError):
-        reference_method(set())
+def test_fast_is_the_default_primary_segmentation():
+    """User decision (2026-11-04): K-means is no longer the primary method."""
+    from analysis.tissue import DEFAULT_PRIMARY_METHOD
+
+    assert DEFAULT_PRIMARY_METHOD == "fast"
+    assert DEFAULT_PRIMARY_METHOD in METHOD_NAMES
+
+
+def test_classes_by_intensity_lists_classes_dark_to_bright(phantom):
+    from analysis.tissue import classes_by_intensity
+
+    scrambled = np.choose(phantom.labels, [0, 7, 2, 5])  # CSF->7, GM->2, WM->5
+    assert classes_by_intensity(scrambled, phantom.image) == [7, 2, 5]
 
 
 def test_voxel_volume_and_registration_scale(tmp_path):

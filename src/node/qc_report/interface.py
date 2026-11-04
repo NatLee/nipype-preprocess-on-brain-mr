@@ -33,13 +33,13 @@ class QCReportInputSpec(BaseInterfaceInputSpec):
     corrected_file = File(exists=True, mandatory=True, desc="Bias-corrected brain")
     bias_field = File(exists=True, mandatory=True, desc="Bias field N4 removed")
     enhanced_file = File(exists=True, mandatory=True, desc="Histogram-equalised brain (for viewing)")
-    kmeans_labels = File(exists=True, mandatory=True, desc="K-means tissue label map")
+    kmeans_labels = File(exists=True, desc="K-means tissue label map")
     fast_labels = File(exists=True, desc="FSL FAST tissue label map")
     atropos_labels = File(exists=True, desc="ANTs Atropos tissue label map")
     volumetrics_file = File(exists=True, mandatory=True, desc="volumetrics.csv from the analysis step")
     agreement_file = File(exists=True, mandatory=True, desc="agreement.csv from the analysis step")
     quality_file = File(exists=True, mandatory=True, desc="quality.json from the analysis step")
-    map_png_files = InputMultiObject(File(exists=True), desc="Probability-map PNGs drawn with nilearn")
+    map_png_files = InputMultiObject(File(exists=True), desc="Tissue-map PNGs drawn with nilearn (primary method)")
     gif_file = File(desc="Rotating 3D brain (optional)")
     html_file = File(desc="Interactive 3D viewer (optional)")
 
@@ -80,7 +80,7 @@ class QCReportInterface(SimpleInterface):
         volumes = pd.read_csv(self.inputs.volumetrics_file)
         agreement = pd.read_csv(self.inputs.agreement_file)
         quality = json.loads(Path(self.inputs.quality_file).read_text())
-        reference = quality["tissue_masks_from"]
+        primary = quality["primary_method"]
         label_maps = self._label_maps()
 
         made = {
@@ -103,7 +103,7 @@ class QCReportInterface(SimpleInterface):
                 self.inputs.corrected_file,
                 self.inputs.bias_field,
                 self.inputs.brain_mask,
-                getattr(self.inputs, f"{reference}_labels"),
+                getattr(self.inputs, f"{primary}_labels"),
                 figure_dir / "bias_correction.png",
                 metrics={"Before N4": quality["before_n4"], "After N4": quality["after_n4"]},
             ),
@@ -132,7 +132,7 @@ class QCReportInterface(SimpleInterface):
                 "subject": subject,
                 "input_name": Path(self.inputs.input_file).name,
                 "nipype_version": nipype.__version__,
-                "reference": reference,
+                "primary": primary,
                 "volumes": volumes.to_dict("records"),
                 "agreement": _pairs_table(agreement),
                 "quality": quality,
