@@ -1,127 +1,255 @@
-<div align="center" style="text-align: center">
-
-# **Nipype: Preprocessing Pipeline on Brain MR Images**
-
-<p style="text-align: center">
-  <img align="center" src="./docs/GM@map.png" alt="GM" width="70%" height="100%">
-  <img align="center" src="./docs/WM@map.png" alt="WM" width="70%" height="100%">
-  <img align="center" src="./docs/CSF@map.png" alt="CSF" width="70%" height="100%">
+<p align="center">
+  <img src="docs/images/cover.png" alt="nipype-preprocess-on-brain-mr: a T1-weighted brain MRI goes through AC-PC alignment, MNI152 registration, skull stripping, N4 and tissue segmentation, and comes out as tissue maps, volumes and a 3D brain" width="100%">
 </p>
-</div>
 
-> Tested on x86/64 Linux-based system.
+[![CI](https://github.com/NatLee/nipype-preprocess-on-brain-mr/actions/workflows/ci.yml/badge.svg)](https://github.com/NatLee/nipype-preprocess-on-brain-mr/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)
+![nipype](https://img.shields.io/badge/nipype-1.12-orange)
+[![License: MIT](https://img.shields.io/github/license/NatLee/nipype-preprocess-on-brain-mr)](LICENSE)
 
-The project is used to do preprocessing on brain MR images (`.nii` files).
+A brain MRI preprocessing pipeline built from [nipype](https://nipype.readthedocs.io/) nodes, small
+enough to read in an afternoon and complete enough to learn from. Point it at T1-weighted scans and
+each one is AC-PC aligned, registered to the MNI152 template, skull stripped, bias corrected and split
+into grey matter, white matter and CSF. Then it goes further than the classic tutorial: it segments the
+brain three different ways and measures how much they agree, turns the labels into tissue volumes,
+checks what bias correction actually changed, renders the brain in 3D, and writes an HTML report per
+scan. Everything runs in one Docker image, on CPU, with openly licensed demo scans.
 
-There is a pipeline include those features:
+<table>
+  <tr>
+    <td width="44%"><img src="docs/images/brain_3d.gif" alt="A brain surface rotating, coloured by grey-matter depth"></td>
+    <td><img src="docs/images/segmentation.png" alt="Axial slices with CSF, grey matter and white matter painted by K-means, FSL FAST and ANTs Atropos"></td>
+  </tr>
+  <tr>
+    <td>Marching-cubes surface of one demo brain, coloured by how deep the grey matter is under each point.</td>
+    <td>The same slices segmented three ways: K-means (the original method), FSL FAST and ANTs Atropos.</td>
+  </tr>
+</table>
 
-- Dockerize the environment
-- Auto AC-PC detection & alignment
-- Registration
-- Skull Stripping
-- Segmentation (using `K-means` to split GM, WM and CSF)
-- Visualize the results (using `nilearn`)
+## What it does
 
-All the features implemented as `nipype`'s interface are connected in a workflow.
-
-## Prerequisites
-
-In this repo, the dataset is downloaded from [LONI Image Data Archive (IDA)](https://ida.loni.usc.edu/login.jsp).
-Collect and download AD and NC screening sample of ADNI1 and ADNI2, and extract them into this folder.  
-
-You can just place the `.nii` samples in `./data`.
-
-> If you only have DICOM files, you can use [DICOM to NIfTI Online Converter](https://www.onlineconverter.com/dicom-to-nifti) to convert them into NIfTI format.
-
-For example, folder `./data` structure is like this:
-
+```mermaid
+flowchart TD
+    scan[/"T1-weighted scan (.nii or .nii.gz)"/]
+    subgraph original["The original nipype chain"]
+        acpc["AC-PC detection and alignment<br/>ART acpcdetect"]
+        gz["gzip"]
+        reorient["Reorient to standard<br/>FSL fslreorient2std"]
+        flirt["Affine registration to MNI152<br/>FSL FLIRT, 12 dof"]
+        bet["Skull stripping<br/>FSL BET"]
+        n4["Bias-field correction<br/>ANTs N4"]
+        enhance["Enhancement<br/>median filter, rescale, histogram equalisation"]
+        kmeans["GM / WM / CSF by K-means<br/>scikit-learn"]
+        maps["Probability maps<br/>nilearn"]
+        final["final_output/"]
+    end
+    subgraph added["Added analysis"]
+        fast["FSL FAST"]
+        atropos["ANTs Atropos"]
+        analysis["Volumes, TIV, Dice agreement,<br/>CJV / CNR before and after N4"]
+        render["3D surface: marching cubes<br/>turntable GIF + interactive page"]
+        report["HTML report per scan"]
+        index["index.html for the whole run"]
+    end
+    scan --> acpc --> gz --> reorient --> flirt --> bet --> n4 --> enhance --> kmeans
+    flirt --> maps
+    kmeans --> maps --> final
+    acpc --> final
+    n4 --> fast
+    n4 --> atropos
+    kmeans --> analysis
+    fast --> analysis
+    atropos --> analysis
+    fast --> render
+    analysis --> report
+    render --> report
+    maps --> report
+    report --> index
 ```
-./data
-├── 099_S_4206.nii
-└── 099_S_4205.nii
 
-0 directories, 2 files
-```
+Each box is a nipype node; nipype runs them in order, in parallel across scans when you ask it to,
+and draws the graph for you (`output/graph.png`). Every node writes its result into its own folder,
+so you can open any intermediate image in a viewer such as [FSLeyes](https://fsl.fmrib.ox.ac.uk/fsl/docs/#/utilities/fsleyes)
+or [ITK-SNAP](http://www.itksnap.org/).
 
-## Usage
+## Quick start
 
-1. Build Neuro Docker image
+You need Docker (8 GB of memory for the container) and about 2 GB of disk for the image.
 
 ```bash
-docker build --tag neuro:latest --file Dockerfile.neuro .
+git clone https://github.com/NatLee/nipype-preprocess-on-brain-mr.git
+cd nipype-preprocess-on-brain-mr
+
+# 1. Build the image (FSL, ANTs, acpcdetect and Python 3.14; about 2 GB)
+docker build -t nipype-preprocess-on-brain-mr .
+
+# 2. Download three demo scans (OpenNeuro ds000001, CC0) into ./data
+docker run --rm -v "$PWD/data:/data" nipype-preprocess-on-brain-mr python fetch_demo_data.py
+
+# 3. Run the pipeline on everything in ./data, results in ./output
+docker run --rm --memory 8g --user "$(id -u):$(id -g)" \
+    -v "$PWD/data:/data:ro" -v "$PWD/output:/output" \
+    nipype-preprocess-on-brain-mr
 ```
 
-2. Build custom Docker image
+Then open `output/index.html`. One scan at a time, each takes roughly 5 to 7 minutes on the 1 mm
+template; with `--n-procs 3` and 8 CPU cores the three demo scans took about 7 minutes in total and
+peaked at 2.5 GB of memory. For a quick look, add
+`--reference /opt/fsl/data/standard/MNI152_T1_2mm.nii.gz` (about two minutes per scan).
 
-> We need to install custom tools in the Docker image.
+`--user` makes the result files yours instead of root's (leave it out on Windows and macOS).
+
+### Use your own scans
+
+Put `.nii` or `.nii.gz` T1-weighted scans in `./data` (DICOM? convert them first with
+[dcm2niix](https://github.com/rordenlab/dcm2niix)). Each scan gets a folder in `./output` named after
+the file. Scans that look nothing like an adult T1-weighted head (other contrasts, babies, heavy
+artefacts) may fail at the AC-PC or registration step; the report shows the detected landmarks so you
+can check.
+
+## Examples
 
 ```bash
-docker build --tag neuro_custom:latest --file Dockerfile .
+# Everything, one scan at a time (the defaults: /data -> /output)
+docker run --rm --memory 8g -v "$PWD/data:/data:ro" -v "$PWD/output:/output" nipype-preprocess-on-brain-mr
+
+# Three scans in parallel
+docker run ... nipype-preprocess-on-brain-mr python workflow.py --n-procs 3
+
+# Only the original K-means segmentation, no 3D render
+docker run ... nipype-preprocess-on-brain-mr python workflow.py --methods --no-3d
+
+# K-means plus FAST, on the 2 mm template (8 times fewer voxels, a few minutes per scan)
+docker run ... nipype-preprocess-on-brain-mr python workflow.py --methods fast \
+    --reference /opt/fsl/data/standard/MNI152_T1_2mm.nii.gz
+
+# All options
+docker run --rm nipype-preprocess-on-brain-mr python workflow.py --help
+
+# A shell inside the image with ./data and ./output mounted
+./dev-bash.sh
 ```
 
-3. Run the workflow
+## What you get
+
+```
+output/
+├── index.html                  all scans: volumes table, chart, 3D brains, links to the reports
+├── cohort/volumetrics.csv      every scan x every method in one table
+├── graph.png, graph_detailed.png   the nipype workflow graph
+└── sub-01_T1w/
+    ├── acpc/                   AC-PC oriented scan, landmark previews, transform matrices
+    ├── zip/  orient2std/  registration/  skull_stripping/  bias_correction/  enhancement/
+    ├── segmentation/           K-means labels and maps (the original output)
+    ├── segmentation_fast/  segmentation_atropos/   the other two methods
+    ├── draw_segmentation/      GM@map.png, WM@map.png, CSF@map.png (nilearn)
+    ├── analysis/               volumetrics.csv, agreement.csv, quality.json
+    ├── render3d/               brain_3d.gif, brain_3d.html (interactive)
+    ├── report/index.html       the QC report for this scan
+    └── final_output/           the files most people want, in one place
+```
+
+### The report
+
+Every scan gets a page with each step side by side, the AC-PC landmarks acpcdetect found, what N4
+changed, the three segmentations with their volumes and agreement, the 3D brain and the original
+probability maps.
+
+<p align="center"><img src="docs/images/pipeline.png" alt="The scan after each step: original, AC-PC, registered, skull stripped, N4 corrected, enhanced" width="100%"></p>
+
+**Bias correction, measured.** The scanner makes some parts of the head brighter than others. N4
+estimates that smooth drift (left) and divides it out; afterwards the grey- and white-matter peaks are
+narrower and further apart (right). The report puts numbers on it: the coefficient of joint variation
+(CJV, lower is better) and the grey/white contrast-to-noise ratio (CNR, higher is better).
+
+<p align="center"><img src="docs/images/bias_correction.png" alt="Bias field maps and tissue histograms before and after N4" width="100%"></p>
+
+**Volumes and agreement.** Volumes are counted in template space and divided by the volume scale of
+the affine registration (the determinant of FLIRT's matrix), which gives an estimate at the scan's own
+size. Agreement between methods is the Dice overlap per tissue (1 = the same voxels).
+
+<p align="center">
+  <img src="docs/images/volumes.png" alt="Tissue volumes of the three demo scans" width="49%">
+  <img src="docs/images/agreement.png" alt="Dice overlap between K-means, FAST and Atropos per tissue" width="49%">
+</p>
+
+Results for the three demo scans (1 mm template, FSL FAST volumes at each scan's own size):
+
+| Scan | TIV (mL) | Grey matter | White matter | CSF | CSF by K-means | CJV before → after N4 | Grey-matter Dice, FAST vs Atropos |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| sub-01 | 1,324 | 45.1% | 33.6% | 21.3% | 32.8% | 0.64 → 0.56 | 0.89 |
+| sub-02 | 1,481 | 44.4% | 34.1% | 21.5% | 33.0% | 0.63 → 0.54 | 0.92 |
+| sub-03 | 1,228 | 45.7% | 33.8% | 20.6% | 32.6% | 0.64 → 0.56 | 0.87 |
+
+These are three healthy adults aged 24 to 27, and FAST puts grey matter at about 45% of the
+intracranial volume and white matter at about a third. N4 lowered the grey/white CJV on every scan.
+
+One thing the comparison makes visible: K-means cuts every brain into three almost equal thirds
+(about 33% each). That comes from the original design, not from the brains. K-means runs on the
+histogram-equalised image, equalisation flattens the intensity histogram, and three clusters on a
+flat histogram end up the same size. FAST and Atropos model the actual tissue peaks instead. All three
+methods agree on white matter (Dice 0.93 to 0.96 for every pair); they differ along the border between
+grey matter and CSF (0.77 to 0.94), which is where K-means finds its extra CSF.
+
+## Inside the Docker image
+
+The image holds exactly the tools the pipeline calls and nothing else; `docker images` reports
+**2.0 GB**. The layers:
+
+| Part | What | Size |
+|---|---|---|
+| Base | `python:3.14-slim` plus graphviz, netpbm, bc/dc and BLAS/LAPACK from apt | 0.27 GB |
+| Python packages | nipype 1.12, nibabel, nilearn, scikit-learn, scikit-image, matplotlib, plotly, pandas | 0.73 GB |
+| FSL (5 conda packages) | `fslreorient2std`, `flirt`, `bet`, `fast`, `fslmaths` and friends | 0.47 GB |
+| ANTs 2.6.5 | `N4BiasFieldCorrection` and `Atropos` only, from the official release | 45 MB |
+| ART | `acpcdetect` and its three model files (bundled in `utils/`) | 25 MB |
+| MNI152 template | FSL's MNI152 T1 at 1 mm and 2 mm (TemplateFlow mirror, SHA-256 checked) | 13 MB |
+
+The previous setup built a neurodocker image that downloaded the whole of FSL 6.0.5.1 (a 4.1 GB
+archive before unpacking) and every ANTs program (a 709 MB zip), then a second image on top. One
+`Dockerfile` with three build stages replaces both. It runs on CPU only; give the container
+`--memory 8g` and the 1 mm pipeline fits comfortably.
+
+## Data and licences
+
+- **Demo scans**: [OpenNeuro ds000001](https://openneuro.org/datasets/ds000001) (Schonberg et al.,
+  2012), released under **CC0**. `src/fetch_demo_data.py` downloads them and checks each file's
+  SHA-256 ([manifest](src/demo_data.json)); no scan is stored in this repository.
+- **FSL** is free for non-commercial use only ([licence](https://fsl.fmrib.ox.ac.uk/fsl/docs/#/license)).
+  Build the image yourself and do not publish it.
+- **ANTs** is Apache 2.0. **ART** (`acpcdetect`, by Babak Ardekani, from [NITRC](https://www.nitrc.org/projects/art))
+  is bundled as it was in the original project; ATRA, also in `utils/`, is not used by the pipeline.
+- **MNI152 template**: FSL's MNI ICBM 152 non-linear 6th generation template, fetched from
+  [TemplateFlow](https://www.templateflow.org/) (`tpl-MNI152NLin6Asym`); same voxels as FSL's copy,
+  stored right-to-left instead of left-to-right.
+- Earlier versions of this README showed ADNI scans. ADNI data cannot be redistributed, so those
+  pictures are gone and every image here comes from the CC0 demo scans.
+- The code is MIT licensed. This is a teaching and research tool, not a medical device.
+
+## Development
 
 ```bash
-docker run --rm -it \
-    --workdir /src \
-    --volume ./src:/src \
-    --volume ./utils:/utils \
-    --volume ./data:/data \
-    --volume ./output:/output \
-    --name neuro_workflow \
-    neuro_custom python workflow.py
+# Fast tests: pure Python, no FSL/ANTs needed (what CI runs on Python 3.12-3.14)
+pip install -r requirements-dev.txt
+python -m pytest -m "not neuro"
+
+# The full pipeline on one demo scan at 2 mm, inside the image (what CI's Docker job runs)
+docker build --target test -t nipype-preprocess-on-brain-mr:test .
+docker run --rm --memory 8g -v "$PWD/data:/data:ro" nipype-preprocess-on-brain-mr:test python -m pytest -m neuro /tests
 ```
 
-### Results
+The enhancement and K-means code is tested against a verbatim copy of the 2024 implementation, so the
+refactor cannot quietly change the original outputs. Synthetic "phantom" brains with known tissue labels
+(`tests/phantom.py`) cover the rest without any real data.
 
-Segmentation results are shown as cover.
+## References
 
-When the workflow ran successfully, all the results of each step will be saved in `./output`.
-
-And the workflow graph will be saved in `./src/graph_detailed.png`.
-
-![workflow](./docs/graph_detailed.png)
-
-## Utilities
-
-The useful `Automatic Registration Toolbox` we used are listed below:
-
-- acpcdetect v2.1 Linux
-- ATRA v1.0 Linux
-
-They are downloaded from [NITRC](https://www.nitrc.org/projects/art) and put in `./utils`.
-
-## Reference
-
-- [quqixun/BrainPrep](https://github.com/quqixun/BrainPrep)
-- [nipype](https://nipype.readthedocs.io/en/latest/)
-- [nilearn](https://nilearn.github.io/)
-- [neurodocker](https://github.com/ReproNim/neurodocker)
-
-## Misc
-
-### Generate Neuro Dockerfile and Build Docker Image
-
-1. Install `neurodocker`
-    ```bash
-    pip install neurodocker
-    ```
-
-2. Generate Dockerfile using `neurodocker`
-    ```bash
-    neurodocker generate docker \
-        --pkg-manager apt \
-        --base-image neurodebian:bullseye \
-        --fsl version=6.0.5.1 \
-        --ants version=2.4.1 \
-        --miniconda version=latest conda_install="nipype" \
-    > Dockerfile.neuro
-    ```
-
-3. Build the docker image with the generated Dockerfile
-    ```bash
-    docker build --tag neuro:latest --file Dockerfile.neuro .
-    ```
+- [nipype](https://nipype.readthedocs.io/), [nilearn](https://nilearn.github.io/), [FSL](https://fsl.fmrib.ox.ac.uk/), [ANTs](https://github.com/ANTsX/ANTs)
+- Ardekani, B. A. & Bachman, A. H. (2009). Model-based automatic detection of the anterior and posterior commissures on MRI scans. *NeuroImage* 46(3).
+- Tustison, N. J. et al. (2010). N4ITK: improved N3 bias correction. *IEEE TMI* 29(6).
+- Zhang, Y., Brady, M. & Smith, S. (2001). Segmentation of brain MR images through a hidden Markov random field model (FAST). *IEEE TMI* 20(1).
+- Avants, B. B. et al. (2011). An open source multivariate framework for n-tissue segmentation (Atropos). *Neuroinformatics* 9(4).
+- [quqixun/BrainPrep](https://github.com/quqixun/BrainPrep), which inspired the original pipeline.
 
 ## Contributor
 

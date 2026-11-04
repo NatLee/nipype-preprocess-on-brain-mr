@@ -1,0 +1,59 @@
+<!doctype html>
+<!--
+  README cover, 1280x640 (GitHub social preview size). The two pictures are real
+  pipeline output, made by cover_assets.py. Render from this folder with:
+    msedge --headless=new --disable-gpu --hide-scrollbars --window-size=1280,640 \
+           --screenshot=cover.png file:///<path>/docs/images/cover.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nipype-preprocess-on-brain-mr cover</title>
+<style>
+  :root {
+    --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781; --line: #383835;
+    --csf: #3987e5; --gm: #d95926; --wm: #199e70;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: var(--surface);  /* same as the renders, so the pictures have no visible edge */
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    position: relative;
+  }
+  .text { position: absolute; left: 72px; top: 64px; width: 640px; }
+  .eyebrow { color: var(--muted); font-size: 17px; letter-spacing: 0.12em; text-transform: uppercase; }
+  h1 { font-size: 60px; line-height: 1.04; margin: 14px 0 18px; font-weight: 700; letter-spacing: -0.01em; }
+  .pitch { color: var(--ink-2); font-size: 25px; line-height: 1.35; margin: 0 0 30px; max-width: 590px; }
+  .steps { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 17px; }
+  .step { border: 1.5px solid var(--line); border-radius: 999px; padding: 5px 13px; color: var(--ink); }
+  .arrow { color: var(--muted); }
+  .slices { position: absolute; left: 72px; bottom: 58px; width: 420px; border-radius: 10px; }
+  .legend { position: absolute; left: 512px; bottom: 64px; font-size: 17px; color: var(--ink-2); line-height: 1.9; }
+  .swatch { display: inline-block; width: 13px; height: 13px; border-radius: 3px; margin-right: 8px; }
+  .brain { position: absolute; right: 18px; top: 22px; width: 600px; height: 600px; }
+</style>
+</head>
+<body>
+  <img class="brain" src="cover-brain.png" alt="">
+  <div class="text">
+    <div class="eyebrow">nipype · FSL · ANTs · ART</div>
+    <h1>nipype-preprocess-<br>on-brain-mr</h1>
+    <p class="pitch">Brain MRI preprocessing you can run today: three segmentations, tissue volumes and a 3D brain.</p>
+    <div class="steps">
+      <span class="step">AC-PC</span><span class="arrow">→</span>
+      <span class="step">MNI152</span><span class="arrow">→</span>
+      <span class="step">Skull strip</span><span class="arrow">→</span>
+      <span class="step">N4</span><span class="arrow">→</span>
+      <span class="step">GM · WM · CSF</span>
+    </div>
+  </div>
+  <img class="slices" src="cover-slices.png" alt="">
+  <div class="legend">
+    <div><span class="swatch" style="background: var(--csf)"></span>CSF</div>
+    <div><span class="swatch" style="background: var(--gm)"></span>Grey matter</div>
+    <div><span class="swatch" style="background: var(--wm)"></span>White matter</div>
+  </div>
+</body>
+</html>
