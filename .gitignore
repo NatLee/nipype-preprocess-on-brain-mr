@@ -1,24 +1,19 @@
+# Scans and results stay local (the demo data is downloaded by src/fetch_demo_data.py)
+data/*
+!data/.gitkeep
+output/*
+!output/.gitkeep
+
+# nipype leftovers from running inside ./src
 src/graph*
-src/preprocess-workflow
 src/preprocess_workflow
-
 src/crash*
-src/.Trash*
-src/.ipynb_checkpoints
 
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints
 .vscode
-
-__pycache__
-
 .DS_Store
-
 desktop.ini
-
-data/ADNI
-data/ADNI-*
-data/*ADNI-*.*
-data/099_S_4205*
-
-output
 
 utils/*/example*/
